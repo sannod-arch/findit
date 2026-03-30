@@ -1,7 +1,9 @@
 import { useState, useRef, useCallback } from "react";
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
-const API_KEY = import.meta.env.VITE_ANTHROPIC_KEY || "";
+// Paste your Google Gemini API key here for local testing.
+// On Vercel: add VITE_GEMINI_KEY in Project Settings → Environment Variables
+const API_KEY = import.meta.env.VITE_GEMINI_KEY || "";
 
 // ─── DESIGN TOKENS ────────────────────────────────────────────────────────────
 const G = {
@@ -61,13 +63,12 @@ const DEMO_ITEMS = [
   { id: 6, type: "lost",  category: "documents",   title: "Потерян паспорт ЕС",description: "Синяя обложка, потерян в общественном транспорте",           location: "Центр города",             city: "Вильнюс", country: "lt", date: "26 марта", blurred: true,  urgent: false },
 ];
 
-// ─── AI CLASSIFICATION ─────────────────────────────────────────────────────────
-// ПАТЧ 1: читаем ключ из window.__anthropicKey (заданного через ApiKeyBanner)
-//         ИЛИ из переменной окружения Vite
-async function classifyImageWithClaude(base64Image, mimeType) {
-  const effectiveKey = window.__anthropicKey || API_KEY;
+// ─── AI CLASSIFICATION (Gemini API) ────────────────────────────────────────────
+async function classifyImageWithGemini(base64Image, mimeType) {
+  const effectiveKey = window.__geminiKey || API_KEY;
 
   if (!effectiveKey) {
+    // Demo mode — return mock result after delay
     await new Promise(r => setTimeout(r, 1800));
     return {
       category: "electronics", title: "Смартфон",
@@ -78,25 +79,7 @@ async function classifyImageWithClaude(base64Image, mimeType) {
     };
   }
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": effectiveKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({
-      // ПАТЧ 3: исправлено название модели
-      model: "claude-3-5-sonnet-20241022",
-      max_tokens: 1000,
-      messages: [{
-        role: "user",
-        content: [
-          { type: "image", source: { type: "base64", media_type: mimeType, data: base64Image } },
-          {
-            type: "text",
-            text: `Ты помогаешь классифицировать найденные предметы для бюро находок. Проанализируй изображение и верни ТОЛЬКО JSON без markdown-обёртки:
+  const prompt = `Ты помогаешь классифицировать найденные предметы для бюро находок. Проанализируй изображение и верни ТОЛЬКО JSON без markdown-обёртки:
 {
   "category": одно из: electronics|documents|keys|bags|clothing|animals|jewelry|other,
   "title": "краткое название предмета по-русски (макс 5 слов)",
@@ -107,18 +90,32 @@ async function classifyImageWithClaude(base64Image, mimeType) {
   "tags": ["массив", "ключевых", "слов", "по-русски"],
   "confidence": число от 0 до 100 насколько уверен,
   "blur_suggestion": "что рекомендуешь размыть для конфиденциальности, или пустая строка"
-}`
-          }
+}`;
+
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${effectiveKey}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{
+        parts: [
+          { text: prompt },
+          { inline_data: { mime_type: mimeType, data: base64Image } }
         ]
-      }]
+      }],
+      generationConfig: {
+        response_mime_type: "application/json"
+      }
     })
   });
 
-  if (!response.ok) throw new Error(`API error: ${response.status}`);
-  const data = await response.json();
-  const text = data.content[0].text.trim();
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => ({}));
+    throw new Error(`API ${response.status}: ${errBody?.error?.message || JSON.stringify(errBody)}`);
+  }
 
-  // ПАТЧ 2: защита от невалидного JSON из AI
+  const data = await response.json();
+  const text = data.candidates[0].content.parts[0].text.trim();
+
   try {
     return JSON.parse(text.replace(/```json|```/g, "").trim());
   } catch {
@@ -140,7 +137,6 @@ const Spinner = ({ size = 20, color = G.found }) => (
 );
 
 // ─── AI PHOTO ANALYZER ────────────────────────────────────────────────────────
-// ПАТЧ 6: убраны дублирующиеся @keyframes (они теперь только в App)
 function AIPhotoAnalyzer({ onResult, onSkip }) {
   const [phase, setPhase] = useState("idle");
   const [preview, setPreview] = useState(null);
@@ -161,7 +157,7 @@ function AIPhotoAnalyzer({ onResult, onSkip }) {
       const base64 = dataUrl.split(",")[1];
       const mimeType = file.type;
       try {
-        const ai = await classifyImageWithClaude(base64, mimeType);
+        const ai = await classifyImageWithGemini(base64, mimeType);
         setResult(ai);
         setPhase("result");
       } catch (err) {
@@ -278,9 +274,9 @@ function AIPhotoAnalyzer({ onResult, onSkip }) {
             <div style={{ fontSize: "13px", color: G.lost, fontWeight: "700", marginBottom: "6px" }}>Ошибка распознавания</div>
             <div style={{ fontSize: "12px", color: G.muted, lineHeight: 1.6 }}>{error}</div>
           </div>
-          {!(window.__anthropicKey || API_KEY) && (
+          {!(window.__geminiKey || API_KEY) && (
             <div style={{ background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.25)", borderRadius: "10px", padding: "12px", marginBottom: "12px", fontSize: "12px", color: G.muted, lineHeight: 1.6 }}>
-              💡 Для работы AI добавьте ключ Anthropic в переменную <code style={{ background: "rgba(255,255,255,0.08)", padding: "1px 5px", borderRadius: "3px", color: "#818cf8" }}>VITE_ANTHROPIC_KEY</code> на Vercel или локально в файл <code style={{ background: "rgba(255,255,255,0.08)", padding: "1px 5px", borderRadius: "3px", color: "#818cf8" }}>.env</code>
+              💡 Для работы AI добавьте ключ Gemini в переменную <code style={{ background: "rgba(255,255,255,0.08)", padding: "1px 5px", borderRadius: "3px", color: "#818cf8" }}>VITE_GEMINI_KEY</code> на Vercel или локально в файл <code style={{ background: "rgba(255,255,255,0.08)", padding: "1px 5px", borderRadius: "3px", color: "#818cf8" }}>.env</code>
             </div>
           )}
           <div style={{ display: "flex", gap: "8px" }}>
@@ -301,7 +297,6 @@ function AddModal({ onClose, onAdd, defaultType }) {
   const [form, setForm] = useState({ title: "", description: "", location: "", category: "", country: "lt", question: "", phone: "", email: "", blurPhoto: false });
   const accent = type === "found" ? G.found : G.lost;
 
-  // ПАТЧ 4: aiQ стабилизирован через useRef — не меняется при ре-рендерах
   const aiQ = useRef(AI_QUESTIONS[Math.floor(Math.random() * AI_QUESTIONS.length)]).current;
 
   const handleAiResult = (result) => {
@@ -313,7 +308,6 @@ function AddModal({ onClose, onAdd, defaultType }) {
   const handleSubmit = () => {
     const catColors = CATEGORY_COLORS[form.category] || CATEGORY_COLORS.other;
     const catInfo   = CATEGORIES.find(c => c.id === form.category);
-    // ПАТЧ 5: city берётся динамически из выбранной страны
     const locationData = LOCATIONS.find(l => l.id === form.country);
     onAdd({
       id: Date.now(),
@@ -554,15 +548,15 @@ function DetailModal({ item, onClose }) {
   );
 }
 
-// ─── API KEY BANNER ───────────────────────────────────────────────────────────
-// ПАТЧ 1: сохраняем в window.__anthropicKey вместо sessionStorage
+// ─── API KEY BANNER (Gemini version) ──────────────────────────────────────────
 function ApiKeyBanner({ onDismiss }) {
   const [key, setKey] = useState("");
   const [saved, setSaved] = useState(false);
 
   const save = () => {
-    if (key.startsWith("sk-ant-")) {
-      window.__anthropicKey = key;   // ← исправлено
+    // Gemini keys usually start with AIza
+    if (key.trim().length > 30) {
+      window.__geminiKey = key.trim();
       setSaved(true);
       setTimeout(onDismiss, 1000);
     }
@@ -573,16 +567,16 @@ function ApiKeyBanner({ onDismiss }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
         <div>
           <div style={{ fontSize: "13px", fontWeight: "700", color: G.text, marginBottom: "3px" }}>✦ Подключите AI-классификацию</div>
-          <div style={{ fontSize: "11px", color: G.muted, lineHeight: 1.5 }}>Вставьте ключ Anthropic API чтобы AI распознавал предметы по фото</div>
+          <div style={{ fontSize: "11px", color: G.muted, lineHeight: 1.5 }}>Вставьте ключ Google Gemini API чтобы распознавать предметы по фото</div>
         </div>
         <button onClick={onDismiss} style={{ background: "none", border: "none", color: G.muted, cursor: "pointer", fontSize: "16px", padding: "0 0 0 8px" }}>✕</button>
       </div>
       <div style={{ display: "flex", gap: "7px" }}>
-        <input value={key} onChange={e => setKey(e.target.value)} placeholder="sk-ant-api03-..." style={{ flex: 1, background: "rgba(255,255,255,0.06)", border: `1px solid ${G.border}`, borderRadius: "8px", padding: "9px 12px", color: G.text, fontSize: "12px", outline: "none", fontFamily: "monospace" }} />
+        <input value={key} onChange={e => setKey(e.target.value)} placeholder="AIzaSy..." style={{ flex: 1, background: "rgba(255,255,255,0.06)", border: `1px solid ${G.border}`, borderRadius: "8px", padding: "9px 12px", color: G.text, fontSize: "12px", outline: "none", fontFamily: "monospace" }} />
         <button onClick={save} style={{ background: saved ? G.success : G.found, border: "none", color: G.text, padding: "9px 14px", borderRadius: "8px", fontWeight: "700", fontSize: "12px", cursor: "pointer" }}>{saved ? "✓" : "OK"}</button>
       </div>
       <div style={{ fontSize: "10px", color: G.dim, marginTop: "7px", lineHeight: 1.5 }}>
-        Ключ хранится только в памяти страницы. Получить на <span style={{ color: "#818cf8" }}>console.anthropic.com</span>
+        Ключ хранится только в памяти. Получить бесплатно на <span style={{ color: "#818cf8" }}>aistudio.google.com</span>
       </div>
     </div>
   );
@@ -688,7 +682,7 @@ export default function App() {
       <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "rgba(6,10,15,0.97)", backdropFilter: "blur(16px)", borderTop: "1px solid rgba(255,255,255,0.07)", padding: "10px 20px 18px", display: "flex", gap: "4px" }}>
         {[["feed", "◈", "Лента"], ["add", "+", "Добавить"], ["profile", "▤", "Кабинет"]].map(([id, icon, label]) => (
           <button key={id} onClick={() => id === "add" ? setShowAdd(true) : setScreen(id)} style={{ flex: 1, background: (screen === id && id !== "add") ? "rgba(255,255,255,0.08)" : id === "add" ? G.found : "transparent", border: `1px solid ${screen === id && id !== "add" ? "rgba(255,255,255,0.14)" : id === "add" ? G.found : "transparent"}`, borderRadius: "10px", color: G.text, padding: "8px 6px", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: "3px", transition: "all 0.2s" }}>
-            <span style={{ fontSize: id === "add" ? "22px" : "18px", fontWeight: id === "add" ? "800" : "400" }}>{icon}</span>
+            <span style={{ fontSize: id === "add" ? "22px", fontWeight: id === "add" ? "800" : "400" }}>{icon}</span>
             <span style={{ fontSize: "10px", fontWeight: screen === id || id === "add" ? "700" : "400", color: screen === id || id === "add" ? G.text : G.muted }}>{label}</span>
           </button>
         ))}
