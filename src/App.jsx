@@ -35,7 +35,6 @@ const LT = {
     pl: { flag: "🇵🇱", label: "Lenkija",  city: "Varšuva"  },
     de: { flag: "🇩🇪", label: "Vokietija",city: "Berlynas" },
   },
-  // Skelbimo formuluotė pagal tipą ir kategoriją
   titlePrefix: {
     found: {
       animals: "Rastas", electronics: "Rasta", documents: "Rasti",
@@ -63,6 +62,392 @@ const LT = {
   anotherPhoto: "Kita nuotrauka",
   recognitionError: "Atpažinimo klaida",
   tryAgain: "Bandyti dar kartą",
+  withoutPhoto: "Be nuotraukos",
+  aiFilledAuto: "AI užpildė automatiškai",
+  name: "Pavadinimas *",
+  description: "Aprašymas (spalva, požymiai, prekės ženklas) *",
+  location: "Radimo / praradimo vieta *",
+  categoryLabel: "Kategorija",
+  markHidden: "Pažymėti duomenis kaip paslėptus (IMEI, vardas, veidas)",
+  next: "Toliau →",
+  back: "← Atgal",
+  country: "Šalis",
+  secretQuestion: "Slaptasis klausimas verifikacijai",
+  aiSuggests: "AI siūlo:",
+  clickToUse: "Paspauskite, kad naudotumėte",
+  ownQuestion: "Arba rašykite savo klausimą...",
+  contacts: "Kontaktai (neprivaloma)",
+  contactsHint: "⚠ Kontaktai paslėpti iki sėkmingos savininko verifikacijos",
+  publish: "Paskelbti ✓",
+  details: "Detalės", verification: "Verifikacija", contact: "Susisiekti",
+  placeAndTime: "Vieta ir laikas",
+  verifyText: "Atsakykite į slaptąjį klausimą. Teisingą atsakymą žino tik tikrasis savininkas.",
+  secretQuestionLabel: "Slaptasis klausimas",
+  sendAnswer: "Siųsti atsakymą",
+  yourAnswer: "Jūsų atsakymas...",
+  chat: "Pokalbis", phone: "Telefonas", email: "El. paštas",
+  chatAnon: "Anonimiškai", afterVerify: "Po verifikacijos",
+  write: "Rašyti",
+  chatPlaceholder: "Rašyti žinutę...",
+  apiKeyTitle: "✦ Prijunkite AI klasifikaciją",
+  apiKeySub: "Įklijuokite Gemini API raktą, kad AI atpažintų daiktus pagal nuotrauką",
+  apiKeyHint: "Raktas saugomas tik puslapio atmintyje. Gauti nemokamai:",
+  blurSuggestion: "Rekomenduojame užmaskuoti:",
+  geoTitle: "Radimo / praradimo vieta",
+  geoSub: "Pasirinkite vietos nustatymo būdą",
+  geoGps: "Įrenginio GPS", geoGpsSub: "Automatiškai nustatyti vietą",
+  geoExif: "Iš nuotraukos", geoExifSub: "EXIF metaduomenys (jei yra)",
+  geoManual: "Rankinis įvedimas", geoManualSub: "Įveskite adresą arba pasirinkite žemėlapyje",
+  geoDetecting: "Nustatoma vieta...",
+  geoDetected: "Vieta nustatyta",
+  geoNoExif: "Nuotraukoje nėra vietos duomenų",
+  geoAccuracy: "Tikslumas",
+  geoExact: "🎯 Tiksli vieta", geo100: "◎ ~100 m ratas", geo500: "◎ ~500 m ratas",
+  geoExactWarn: "rizika", geoConfirm: "Patvirtinti →",
+  geoSetPin: "Paspauskite žemėlapį vietai pažymėti",
+  geoReset: "✕ Išvalyti",
+  geoAddressPlaceholder: "Adresas, orientyras, rajonas...",
+  geoSaved: "Vieta išsaugota",
+  geoChange: "✎ Keisti vietą", geoChangeMethod: "↺ Keisti būdą",
+  geoSkip: "Tęsti be vietos",
+  photosLabel: "Nuotraukų galerija",
+  photoAdd: "+ Pridėti nuotrauką",
+  photoMax: "Maks. 4 nuotraukos",
+  photoView: "Peržiūrėti visą nuotrauką",
+  photoOf: "iš",
+};
+
+// ─── KATEGORIJŲ DUOMENYS ──────────────────────────────────────────────────────
+const CATEGORIES = [
+  { id: "all",         icon: "◈" },
+  { id: "electronics", icon: "⌘" },
+  { id: "documents",   icon: "▤" },
+  { id: "keys",        icon: "⚿" },
+  { id: "bags",        icon: "◻" },
+  { id: "clothing",    icon: "◈" },
+  { id: "animals",     icon: "◉" },
+  { id: "jewelry",     icon: "◇" },
+  { id: "other",       icon: "○" },
+];
+
+const CATEGORY_COLORS = {
+  electronics: { bg: "#1a1a2e", accent: "#6366f1" },
+  documents:   { bg: "#2d1b33", accent: "#c0392b" },
+  keys:        { bg: "#0f3460", accent: "#f5a623" },
+  bags:        { bg: "#1e3a2f", accent: "#27ae60" },
+  clothing:    { bg: "#1a2030", accent: "#3498db" },
+  animals:     { bg: "#1a2f1a", accent: "#2ecc71" },
+  jewelry:     { bg: "#1a2a3a", accent: "#95a5a6" },
+  other:       { bg: "#1e1a2a", accent: "#9b59b6" },
+};
+
+const SECRET_QUESTIONS = {
+  electronics: [
+    "Kokios spalvos buvo įrenginio dėklas?",
+    "Ar ekrane buvo įtrūkimų ar įbrėžimų?",
+    "Kokie paskutiniai 4 serijos numerio skaitmenys?",
+    "Kokia programėlė buvo atidaryta paskutinė?",
+    "Ar buvo apsauginis stiklas?",
+  ],
+  documents: [
+    "Kokia dokumento išdavimo data?",
+    "Koks pirmas asmenvardžio raidė?",
+    "Kokios spalvos buvo dokumentų viršelis?",
+    "Ar dokumente buvo kitų kortelių?",
+    "Koks dokumento numeris prasideda?",
+  ],
+  keys: [
+    "Kiek raktų buvo ryšulyje?",
+    "Ar buvo pakabukas? Koks?",
+    "Kokios spalvos buvo raktų laikiklis?",
+    "Ar buvo automobilio raktas?",
+    "Kokios formos buvo pagrindinis raktas?",
+  ],
+  bags: [
+    "Kas buvo viduje krepšyje?",
+    "Kokios spalvos buvo pamušalas viduje?",
+    "Ar buvo užrašų ant krepšio?",
+    "Kiek kišenių turėjo krepšys?",
+    "Kokia buvo rankenos spalva?",
+  ],
+  animals: [
+    "Kokios spalvos buvo apykaklė?",
+    "Ar gyvūnas sterilizuotas / kastruotas?",
+    "Koks gyvūno vardas?",
+    "Ar yra ypatingų požymių (dėmės, randai)?",
+    "Koks gyvūno amžius (apytikslis)?",
+  ],
+  clothing: [
+    "Koks drabužio dydis?",
+    "Ar buvo etiketė viduje?",
+    "Kokios spalvos buvo pamušalas?",
+    "Ar buvo kokių nors dėmių ar įbrėžimų?",
+    "Kokia buvo sagų spalva?",
+  ],
+  jewelry: [
+    "Ar buvo graviravimas? Koks?",
+    "Iš kokio metalo pagamintas papuošalas?",
+    "Ar buvo akmenų? Kokių?",
+    "Koks papuošalo dydis (apytikslis)?",
+    "Ar papuošalas turėjo ypatingą požymį?",
+  ],
+  other: [
+    "Koks buvo daikto spalva?",
+    "Ar buvo ypatingų požymių?",
+    "Koks apytikslis daikto dydis?",
+    "Ar ant daikto buvo kokių nors užrašų?",
+    "Iš kokios medžiagos pagamintas daiktas?",
+  ],
+};
+
+const DEMO_ITEMS = [
+  { id: 1, type: "found", category: "animals", title: "Rasta balta katė", description: "Balta katė su rudais dėmiais, labai baikšti, be antkaklio", location: "Žirmūnai, kiemas prie nr.12", city: "Vilnius", country: "lt", date: "Kovo 28", blurred: false, photos: [] },
+  { id: 2, type: "found", category: "electronics", title: "Rastas juodas išmanusis", description: "Išmanusis juodame dėkle, ekrano kampas įtrūkęs", location: "Vilniaus stotis, 2-as peronas", city: "Vilnius", country: "lt", date: "Kovo 27", blurred: true, photos: [] },
+  { id: 3, type: "found", category: "keys", title: "Rasti raktai", description: "3 raktai, pakabukas mėlyno meškiuko pavidalo", location: "Vingio parkas, prie fontano", city: "Vilnius", country: "lt", date: "Kovo 26", blurred: false, photos: [] },
+  { id: 4, type: "lost", category: "animals", title: "Dingo katė Mūša", description: "Balta katė su rudais dėmiais, sterilizuota, raudona antkaklis", location: "Žirmūnai", city: "Vilnius", country: "lt", date: "Kovo 27", blurred: false, urgent: true, photos: [] },
+  { id: 5, type: "lost", category: "electronics", title: "Pamesta pilka iPad mini", description: "iPad mini skaidriame dėkle su katės lipduku", location: "Telegrafas restoranas", city: "Vilnius", country: "lt", date: "Kovo 28", blurred: false, urgent: true, photos: [] },
+  { id: 6, type: "lost", category: "documents", title: "Pametamas ES pasas", description: "Mėlynas viršelis, pamesta viešajame transporte", location: "Miesto centras", city: "Vilnius", country: "lt", date: "Kovo 26", blurred: true, urgent: false, photos: [] },
+];
+
+// ─── NUOTRAUKOS SUSPAUDIMAS ───────────────────────────────────────────────────
+async function compressImage(file, maxPx = 1200, quality = 0.78) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const ratio = Math.min(maxPx / img.width, maxPx / img.height, 1);
+      const w = Math.round(img.width * ratio);
+      const h = Math.round(img.height * ratio);
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+      canvas.toBlob(blob => {
+        URL.revokeObjectURL(url);
+        const reader = new FileReader();
+        reader.onload = e => resolve(e.target.result);
+        reader.readAsDataURL(blob);
+      }, "image/jpeg", quality);
+    };
+    img.src = url;
+  });
+}
+
+// ─── EXIF GEOLOKACIJOS SKAITYMAS (PA taisytas) ───────────────────────────────
+// Naudojame exifreader biblioteką per CDN
+function loadExifReader() {
+  return new Promise((resolve, reject) => {
+    if (window.EXIFReader) {
+      resolve(window.EXIFReader);
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://unpkg.com/exifreader@4.22.0/dist/exifreader.js";
+    script.onload = () => resolve(window.EXIFReader);
+    script.onerror = reject;
+    document.head.appendChild(script);
+  });
+}
+
+async function readExifGps(file) {
+  try {
+    const EXIFReader = await loadExifReader();
+    const tags = await EXIFReader.load(file);
+    
+    if (!tags.GPSLatitude || !tags.GPSLongitude) {
+      return null;
+    }
+    
+    const lat = convertExifGpsToDecimal(tags.GPSLatitude, tags.GPSLatitudeRef);
+    const lng = convertExifGpsToDecimal(tags.GPSLongitude, tags.GPSLongitudeRef);
+    
+    if (lat !== null && lng !== null) {
+      return { lat, lng };
+    }
+    return null;
+  } catch (err) {
+    console.warn('EXIF read error:', err);
+    return null;
+  }
+}
+
+function convertExifGpsToDecimal(gpsValue, gpsRef) {
+  if (!gpsValue || gpsValue.length < 3) return null;
+  
+  const degrees = gpsValue[0]?.numerator / gpsValue[0]?.denominator;
+  const minutes = gpsValue[1]?.numerator / gpsValue[1]?.denominator;
+  const seconds = gpsValue[2]?.numerator / gpsValue[2]?.denominator;
+  
+  if (isNaN(degrees) || isNaN(minutes) || isNaN(seconds)) return null;
+  
+  let decimal = degrees + (minutes / 60) + (seconds / 3600);
+  
+  if (gpsRef === 'S' || gpsRef === 'W') {
+    decimal = -decimal;
+  }
+  
+  return decimal;
+}
+
+// ─── REVERSE GEOCODING ────────────────────────────────────────────────────────
+async function reverseGeocode(lat, lng) {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=lt`, {
+      headers: { "User-Agent": "FindIt-App/1.0" }
+    });
+    const d = await r.json();
+    const a = d.address || {};
+    const parts = [a.road, a.suburb || a.neighbourhood, a.city || a.town || a.village].filter(Boolean);
+    return parts.slice(0, 2).join(", ") || d.display_name?.split(",").slice(0, 2).join(",") || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  } catch {
+    return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  }
+}
+
+// ─── AI KLASIFIKACIJA (Gemini) ────────────────────────────────────────────────
+async function classifyImageWithGemini(base64Image, mimeType, itemType = "found") {
+  const effectiveKey = window.__geminiKey || API_KEY;
+  const typeText = itemType === "found" ? "rastas" : "pamestas";
+  
+  // Timeout apsauga
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+  
+  if (!effectiveKey) {
+    await new Promise(r => setTimeout(r, 1800));
+    clearTimeout(timeoutId);
+    return {
+      category: "electronics",
+      titleLt: itemType === "found" ? "Rastas išmanusis telefonas" : "Pamestas išmanusis telefonas",
+      description: "Tamsus išmanusis telefonas, galbūt dėkle. Ekranas nukreiptas žemyn.",
+      color: "juodas", brand: "nežinomas", condition: "naudotas",
+      tags: ["telefonas", "elektronika", "tamsus"], confidence: 87,
+      blur_suggestion: "Rekomenduojame paslėpti serijos numerį, jei matomas",
+      secretQuestions: SECRET_QUESTIONS["electronics"].slice(0, 3),
+    };
+  }
+  
+  const prompt = `Tu padedi klasifikuoti rastus / pamestus daiktus skaitmeniniame radinių biure. Analizuok paveikslėlį ir grąžink TIK JSON be markdown apvalkalo:
+{
+"category": vienas iš: electronics|documents|keys|bags|clothing|animals|jewelry|other,
+"titleLt": "skelbimo pavadinimas lietuviškai, ${typeText} daiktas, maks. 5 žodžiai, pvz. 'Rasta juoda katė' arba 'Pamestas iPhone'",
+"description": "išsamus aprašymas lietuviškai: spalva, forma, požymiai (2-3 sakiniai)",
+"color": "pagrindinė spalva lietuviškai",
+"brand": "prekės ženklas jei matomas, kitu atveju 'nežinomas'",
+"condition": "naujas|gera|naudotas|pažeistas",
+"tags": ["masyvas", "raktinių", "žodžių", "lietuviškai"],
+"confidence": skaičius nuo 0 iki 100 kiek esi tikras,
+"blur_suggestion": "ką rekomenduoji užmaskuoti dėl konfidencialumo, arba tuščia eilutė",
+"secretQuestions": ["3 konkretūs slaptieji klausimai lietuviškai pagal šio daikto požymius"]
+}`;
+
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${effectiveKey}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64Image } }] }],
+        generationConfig: { response_mime_type: "application/json" }
+      }),
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      const errBody = await response.json().catch(() => ({}));
+      if (response.status === 429) {
+        throw new Error('Per daug užklausų. Palaukite minutę.');
+      }
+      throw new Error(`API ${response.status}: ${errBody?.error?.message || "Klaida"}`);
+    }
+    
+    const data = await response.json();
+    const text = data.candidates[0].content.parts[0].text.trim();
+    
+    try {
+      const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
+      if (!parsed.secretQuestions || parsed.secretQuestions.length < 3) {
+        parsed.secretQuestions = SECRET_QUESTIONS[parsed.category] || SECRET_QUESTIONS.other;
+      }
+      return parsed;
+    } catch {
+      throw new Error("Neteisingas AI atsakymo formatas. Bandykite dar kartą.");
+    }
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      throw new Error('Užklausos laikas baigėsi. Patikrinkite ryšį.');
+    }
+    throw err;
+  }
+}
+
+// ─── MAŽOS KOMPONENTES ────────────────────────────────────────────────────────
+const Pill = ({ color = G.found, children, small }) => (
+  <span style={{ background: color, color: "#fff", fontSize: small ? "10px" : "11px", fontWeight: "700", letterSpacing: "0.07em", padding: small ? "3px 7px" : "4px 10px", borderRadius: "4px", textTransform: "uppercase", whiteSpace: "nowrap" }}>{children}</span>
+);
+
+const BlurBadge = () => (
+  <span style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.18)", borderRadius: "4px", fontSize: "10px", padding: "2px 6px", color: "rgba(255,255,255,0.6)" }}>◎ paslėpta</span>
+);
+
+const Spinner = ({ size = 20, color = G.found }) => (
+  <div style={{ width: size, height: size, border: `2px solid rgba(255,255,255,0.1)`, borderTopColor: color, borderRadius: "50%", animation: "spin 0.7s linear infinite", flexShrink: 0 }} />
+);
+
+// ─── NUOTRAUKŲ GALERIJA ───────────────────────────────────────────────────────
+function PhotoGallery({ photos, onAdd, onRemove, maxPhotos = 4 }) {
+  const inputRef = useRef(null);
+  const handleFile = async (e) => {
+    const files = Array.from(e.target.files || []);
+    for (const file of files) {
+      if (!file.type.startsWith("image/")) continue;
+      if (photos.length >= maxPhotos) break;
+      const compressed = await compressImage(file);
+      onAdd(compressed);
+    }
+    e.target.value = "";
+  };
+  
+  return (
+    <div>
+      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "8px" }}>
+        {photos.map((src, i) => (
+          <div key={i} style={{ position: "relative", width: "80px", height: "80px", borderRadius: "10px", overflow: "hidden", flexShrink: 0 }}>
+            <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            <button onClick={() => onRemove(i)} style={{ position: "absolute", top: "3px", right: "3px", background: "rgba(0,0,0,0.7)", border: "none", color: "#fff", width: "20px", height: "20px", borderRadius: "50%", cursor: "pointer", fontSize: "11px", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+            {i === 0 && <div style={{ position: "absolute", bottom: "3px", left: "3px", background: "rgba(99,102,241,0.85)", borderRadius: "3px", fontSize: "8px", color: "#fff", padding: "1px 4px", fontWeight: "700" }}>AI</div>}
+          </div>
+        ))}
+        {photos.length < maxPhotos && (
+          <div onClick={() => inputRef.current?.click()} style={{ width: "80px", height: "80px", borderRadius: "10px", border: "2px dashed rgba(255,255,255,0.2)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", cursor: "pointer", gap: "4px", flexShrink: 0 }}>
+            <span style={{ fontSize: "20px", color: G.muted }}>+</span>
+            <span style={{ fontSize: "9px", color: G.muted }}>{LT.photoAdd.replace("+ ", "")}</span>
+          </div>
+        )}
+      </div>
+      <div style={{ fontSize: "10px", color: G.dim }}>{LT.photoMax}</div>
+      <input ref={inputRef} type="file" accept="image/*" multiple onChange={handleFile} style={{ display: "none" }} />
+    </div>
+  );
+}
+
+// ─── LEAFLET ŽEMĖLAPIS ────────────────────────────────────────────────────────
+function LeafletMap({ pin, buffer, onPinChange, interactive = true, height = 200 }) {
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const markerRef = useRef(null);
+  const circleRef = useRef(null);
+  const containerId = useRef(`map-${Math.random().toString(36).slice(2)}`).current;
+  
+  useEffect(() => {
+    if (mapInstanceRef.current) return;
+    
+    const loadLeaflet = () => {
+      if (window.L) { initMap(); return; }
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href =  tryAgain: "Bandyti dar kartą",
   withoutPhoto: "Be nuotraukos",
   aiFilledAuto: "AI užpildė automatiškai",
   name: "Pavadinimas *",
