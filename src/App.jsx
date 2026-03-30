@@ -682,7 +682,7 @@ export default function App() {
       <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "rgba(6,10,15,0.97)", backdropFilter: "blur(16px)", borderTop: "1px solid rgba(255,255,255,0.07)", padding: "10px 20px 18px", display: "flex", gap: "4px" }}>
         {[["feed", "◈", "Лента"], ["add", "+", "Добавить"], ["profile", "▤", "Кабинет"]].map(([id, icon, label]) => (
           <button key={id} onClick={() => id === "add" ? setShowAdd(true) : setScreen(id)} style={{ flex: 1, background: (screen === id && id !== "add") ? "rgba(255,255,255,0.08)" : id === "add" ? G.found : "transparent", border: `1px solid ${screen === id && id !== "add" ? "rgba(255,255,255,0.14)" : id === "add" ? G.found : "transparent"}`, borderRadius: "10px", color: G.text, padding: "8px 6px", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: "3px", transition: "all 0.2s" }}>
-            <span style={{ fontSize: id === "add" ? "22px", fontWeight: id === "add" ? "800" : "400" }}>{icon}</span>
+            <span style={{ fontSize: id === "add" ? "22px" : "18px", fontWeight: id === "add" ? "800" : "400" }}>{icon}</span>
             <span style={{ fontSize: "10px", fontWeight: screen === id || id === "add" ? "700" : "400", color: screen === id || id === "add" ? G.text : G.muted }}>{label}</span>
           </button>
         ))}
