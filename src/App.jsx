@@ -233,7 +233,7 @@ async function compressImage(file, maxPx = 1200, quality = 0.78) {
   });
 }
 
-// ─── EXIF GEOLOKACIJOS SKAITYMAS (PA taisytas - veikia!) ─────────────────────
+// EXIF geolokacijos skaitymas (PA taisytas)
 async function readExifGps(file) {
   return new Promise((resolve) => {
     // Įkeliam exifreader biblioteką iš CDN
@@ -253,6 +253,7 @@ function parseExif(file, resolve) {
   window.EXIFReader.load(file)
     .then((tags) => {
       if (!tags.GPSLatitude || !tags.GPSLongitude) {
+        console.log("No GPS data in EXIF");
         resolve(null);
         return;
       }
@@ -261,12 +262,16 @@ function parseExif(file, resolve) {
       const lng = convertGpsToDecimal(tags.GPSLongitude, tags.GPSLongitudeRef);
 
       if (lat !== null && lng !== null) {
+        console.log("GPS found:", { lat, lng });
         resolve({ lat, lng });
       } else {
         resolve(null);
       }
     })
-    .catch(() => resolve(null));
+    .catch((err) => {
+      console.error("EXIF parse error:", err);
+      resolve(null);
+    });
 }
 
 function convertGpsToDecimal(gpsValue, gpsRef) {
@@ -1897,13 +1902,13 @@ function ItemCard({ item, onClick }) {
   );
 }
 
-// ─── DETALIŲ MODALAS (su lightbox galerija) ───────────────────────────────────
+// ─── DETALIŲ MODALAS ──────────────────────────────────────────────────────────
 function DetailModal({ item, onClose }) {
   const [tab, setTab] = useState("info");
   const [chatMsg, setChatMsg] = useState("");
   const [msgs, setMsgs] = useState([{ from: "system", text: "Pokalbis anonimiškas iki verifikacijos." }]);
   const [photoIdx, setPhotoIdx] = useState(0);
-  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [lightboxOpen, setLightboxOpen] = useState(false); // ← Nauja būsena
 
   const colors = CATEGORY_COLORS[item.category] || CATEGORY_COLORS.other;
   const isLost = item.type === "lost";
@@ -1911,6 +1916,7 @@ function DetailModal({ item, onClose }) {
   const accent = item.accent || colors.accent;
   const photos = item.photos || [];
 
+  // ← Navigacijos funkcijos
   const nextPhoto = useCallback(() => {
     setPhotoIdx((i) => (i + 1) % photos.length);
   }, [photos.length]);
@@ -1936,496 +1942,225 @@ function DetailModal({ item, onClose }) {
   };
 
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.82)",
-        backdropFilter: "blur(10px)",
-        zIndex: 200,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "16px",
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: bg,
-          border: `1px solid ${accent}44`,
-          borderRadius: "24px",
-          width: "100%",
-          maxWidth: "500px",
-          display: "flex",
-          flexDirection: "column",
-          maxHeight: "93vh",
-          overflow: "hidden",
-          boxShadow: "0 40px 80px rgba(0,0,0,0.6)",
-        }}
-      >
-        {/* ─── GALERIJA MODALO VIDUJE ─── */}
-        {photos.length > 0 && (
-          <div style={{ position: "relative" }}>
-            <img
-              src={photos[photoIdx]}
-              alt=""
-              onClick={() => setLightboxOpen(true)}
-              style={{
-                width: "100%",
-                height: "200px",
-                objectFit: "cover",
-                display: "block",
-                cursor: "zoom-in",
-              }}
-            />
-
-            {/* Navigacijos taškai */}
-            {photos.length > 1 && (
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: "10px",
-                  left: "50%",
-                  transform: "translateX(-50%)",
-                  display: "flex",
-                  gap: "6px",
-                  background: "rgba(0,0,0,0.5)",
-                  padding: "6px 10px",
-                  borderRadius: "20px",
-                }}
-              >
-                {photos.map((_, i) => (
-                  <button
-                    key={i}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setPhotoIdx(i);
-                    }}
-                    style={{
-                      width: i === photoIdx ? "20px" : "8px",
-                      height: "8px",
-                      borderRadius: "4px",
-                      background: i === photoIdx ? "#fff" : "rgba(255,255,255,0.5)",
-                      border: "none",
-                      cursor: "pointer",
-                      transition: "all 0.2s",
-                      padding: 0,
-                    }}
-                  />
-                ))}
+    <>
+      {/* ─── MODALAS ─── */}
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.82)", backdropFilter: "blur(10px)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+        <div onClick={(e) => e.stopPropagation()} style={{ background: bg, border: `1px solid ${accent}44`, borderRadius: "24px", width: "100%", maxWidth: "500px", display: "flex", flexDirection: "column", maxHeight: "93vh", overflow: "hidden", boxShadow: "0 40px 80px rgba(0,0,0,0.6)" }}>
+          {/* Nuotraukų galerija viršuje */}
+          {photos.length > 0 && (
+            <div style={{ position: "relative" }}>
+              <img 
+                src={photos[photoIdx]} 
+                alt="" 
+                onClick={() => setLightboxOpen(true)} // ← Atidaro lightbox
+                style={{ width: "100%", height: "200px", objectFit: "cover", display: "block", cursor: "zoom-in" }} 
+              />
+              {photos.length > 1 && (
+                <div style={{ position: "absolute", bottom: "10px", left: "50%", transform: "translateX(-50%)", display: "flex", gap: "5px" }}>
+                  {photos.map((_, i) => (
+                    <div 
+                      key={i} 
+                      onClick={(e) => { e.stopPropagation(); setPhotoIdx(i); }} 
+                      style={{ width: i === photoIdx ? "16px" : "6px", height: "6px", borderRadius: "3px", background: i === photoIdx ? "#fff" : "rgba(255,255,255,0.5)", cursor: "pointer", transition: "all 0.2s" }} 
+                    />
+                  ))}
+                </div>
+              )}
+              {/* Zoom ikona */}
+              <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "rgba(0,0,0,0.4)", borderRadius: "50%", width: "48px", height: "48px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "20px", color: "#fff", opacity: 0.7, pointerEvents: "none" }}>
+                🔍
               </div>
-            )}
+            </div>
+          )}
 
-            {/* Skaitliukas */}
-            {photos.length > 1 && (
-              <div
+          <div style={{ padding: "20px 22px 0" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
+              <div style={{ display: "flex", gap: "5px", flexWrap: "wrap" }}>
+                <Pill color={isLost ? G.lost : G.found} small>{isLost ? `⚠ ${LT.lost}` : `◉ ${LT.found}`}</Pill>
+                <Pill color={accent} small>{item.tag}</Pill>
+                {item.blurred && <BlurBadge />}
+              </div>
+              <button onClick={onClose} style={{ background: "rgba(255,255,255,0.1)", border: "none", color: G.text, width: "30px", height: "30px", borderRadius: "50%", cursor: "pointer" }}>✕</button>
+            </div>
+            <div style={{ fontSize: "21px", fontWeight: "800", color: G.text, marginBottom: "4px", fontFamily: G.serif }}>{item.title}</div>
+            <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.38)", marginBottom: "14px" }}>◎ {item.city} · {item.date}</div>
+            <div style={{ display: "flex", gap: "2px", background: "rgba(0,0,0,0.3)", borderRadius: "10px", padding: "3px" }}>
+              {["info", "verify", "contact"].map(([id, label]) => (
+                <button key={id} onClick={() => setTab(id)} style={{ flex: 1, padding: "7px 4px", border: "none", borderRadius: "8px", background: tab === id ? accent : "transparent", color: tab === id ? "#fff" : G.muted, fontSize: "11px", fontWeight: "700", cursor: "pointer" }}>{label}</button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ overflowY: "auto", padding: "14px 22px 22px", flex: 1 }}>
+            {tab === "info" && (
+              <>
+                <div style={{ fontSize: "14px", color: "rgba(255,255,255,0.7)", lineHeight: 1.7, marginBottom: "13px" }}>{item.description}</div>
+                <div style={{ background: "rgba(0,0,0,0.25)", borderRadius: "10px", padding: "12px" }}>
+                  <div style={{ fontSize: "10px", color: G.muted, marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.08em" }}>{LT.placeAndTime}</div>
+                  <div style={{ fontSize: "13px", color: G.text }}>{item.location}</div>
+                  <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.38)", marginTop: "3px" }}>{item.city} · {item.date}</div>
+                </div>
+                {item.geoPin && <div style={{ marginTop: "12px" }}><LeafletMap pin={item.geoPin} buffer={item.geoBuffer} interactive={false} height={160} /></div>}
+              </>
+            )}
+            {tab === "verify" && (
+              <>
+                <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.55)", marginBottom: "13px", lineHeight: 1.6 }}>{LT.verifyText}</div>
+                {item.secretQuestion && (
+                  <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: "10px", padding: "13px", marginBottom: "11px" }}>
+                    <div style={{ fontSize: "10px", color: G.muted, marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.08em" }}>{LT.secretQuestionLabel}</div>
+                    <div style={{ fontSize: "14px", color: G.text, fontWeight: "600" }}>{item.secretQuestion}</div>
+                  </div>
+                )}
+                <textarea placeholder={LT.yourAnswer} style={{ width: "100%", background: "rgba(255,255,255,0.06)", border: `1px solid ${G.border}`, borderRadius: "10px", padding: "11px", color: G.text, fontSize: "13px", resize: "none", height: "80px", outline: "none", boxSizing: "border-box", fontFamily: G.sans }} />
+                <button style={{ marginTop: "10px", width: "100%", background: accent, border: "none", color: G.text, padding: "12px", borderRadius: "10px", fontSize: "13px", fontWeight: "700", cursor: "pointer" }}>{LT.sendAnswer}</button>
+              </>
+            )}
+            {tab === "contact" && (
+              <>
+                <div style={{ display: "flex", flexDirection: "column", gap: "7px", marginBottom: "14px" }}>
+                  {[["chat", LT.chatAnon, G.found], ["phone", LT.afterVerify, G.success], ["email", LT.afterVerify, "#2980b9"]].map(([key, sub, color]) => (
+                    <div key={key} style={{ background: "rgba(0,0,0,0.22)", borderRadius: "10px", padding: "11px", display: "flex", alignItems: "center", gap: "10px" }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: "13px", fontWeight: "600", color: G.text }}>{key === "chat" ? "💬 Chat" : key === "phone" ? "📞 Phone" : "✉️ Email"}</div>
+                        <div style={{ fontSize: "11px", color: G.muted }}>{sub}</div>
+                      </div>
+                      <button style={{ background: color, border: "none", color: G.text, padding: "6px 12px", borderRadius: "7px", fontSize: "11px", fontWeight: "700", cursor: "pointer" }}>{LT.write}</button>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: "10px", padding: "10px", minHeight: "88px", marginBottom: "10px", display: "flex", flexDirection: "column", gap: "7px" }}>
+                  {msgs.map((m, i) => <div key={i} style={{ alignSelf: m.from === "me" ? "flex-end" : m.from === "system" ? "center" : "flex-start", background: m.from === "me" ? accent : m.from === "system" ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.1)", padding: "7px 11px", borderRadius: "9px", fontSize: "12px", color: m.from === "system" ? G.muted : G.text, maxWidth: "82%" }}>{m.text}</div>)}
+                </div>
+                <div style={{ display: "flex", gap: "7px" }}>
+                  <input value={chatMsg} onChange={(e) => setChatMsg(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} placeholder={LT.chatPlaceholder} style={{ flex: 1, background: "rgba(255,255,255,0.06)", border: `1px solid ${G.border}`, borderRadius: "9px", padding: "9px 12px", color: G.text, fontSize: "13px", outline: "none" }} />
+                  <button onClick={send} style={{ background: accent, border: "none", color: G.text, padding: "9px 14px", borderRadius: "9px", cursor: "pointer" }}>→</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ─── LIGHTBOX (UŽ MODALO RIBŲ) ─── */}
+      {lightboxOpen && (
+        <div 
+          onClick={() => setLightboxOpen(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.95)",
+            zIndex: 400, // ← Aukštesnis už modalą
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            animation: "fadeIn 0.2s ease",
+          }}
+        >
+          <img
+            src={photos[photoIdx]}
+            alt=""
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              maxWidth: "95%",
+              maxHeight: "95%",
+              objectFit: "contain",
+              boxShadow: "0 0 40px rgba(0,0,0,0.8)",
+            }}
+          />
+          <button
+            onClick={() => setLightboxOpen(false)}
+            style={{
+              position: "absolute",
+              top: "20px",
+              right: "20px",
+              background: "rgba(255,255,255,0.15)",
+              border: "none",
+              color: "#fff",
+              width: "44px",
+              height: "44px",
+              borderRadius: "50%",
+              cursor: "pointer",
+              fontSize: "22px",
+              backdropFilter: "blur(8px)",
+            }}
+          >
+            ✕
+          </button>
+          {photos.length > 1 && (
+            <>
+              <button
+                onClick={(e) => { e.stopPropagation(); prevPhoto(); }}
                 style={{
                   position: "absolute",
-                  top: "10px",
-                  right: "10px",
-                  background: "rgba(0,0,0,0.6)",
-                  borderRadius: "6px",
-                  padding: "4px 8px",
-                  fontSize: "11px",
+                  left: "20px",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "rgba(255,255,255,0.15)",
+                  border: "none",
                   color: "#fff",
-                  fontWeight: "600",
+                  width: "48px",
+                  height: "48px",
+                  borderRadius: "50%",
+                  cursor: "pointer",
+                  fontSize: "24px",
+                  backdropFilter: "blur(8px)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                 }}
               >
-                {photoIdx + 1} / {photos.length}
-              </div>
-            )}
-
-            {/* Zoom ikona */}
+                ‹
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); nextPhoto(); }}
+                style={{
+                  position: "absolute",
+                  right: "20px",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "rgba(255,255,255,0.15)",
+                  border: "none",
+                  color: "#fff",
+                  width: "48px",
+                  height: "48px",
+                  borderRadius: "50%",
+                  cursor: "pointer",
+                  fontSize: "24px",
+                  backdropFilter: "blur(8px)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                ›
+              </button>
+            </>
+          )}
+          {photos.length > 1 && (
             <div
               style={{
                 position: "absolute",
-                top: "50%",
+                bottom: "20px",
                 left: "50%",
-                transform: "translate(-50%, -50%)",
-                background: "rgba(0,0,0,0.4)",
-                borderRadius: "50%",
-                width: "48px",
-                height: "48px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "20px",
+                transform: "translateX(-50%)",
+                background: "rgba(0,0,0,0.6)",
+                borderRadius: "8px",
+                padding: "6px 14px",
+                fontSize: "13px",
                 color: "#fff",
-                opacity: 0.7,
-                pointerEvents: "none",
-              }}
-            >
-              🔍
-            </div>
-          </div>
-        )}
-
-        {/* ─── LIGHTBOX (PILNO EKRANO PERŽIŪRA) ─── */}
-        {lightboxOpen && (
-          <div
-            onClick={() => setLightboxOpen(false)}
-            style={{
-              position: "fixed",
-              inset: 0,
-              background: "rgba(0,0,0,0.95)",
-              zIndex: 300,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              animation: "fadeIn 0.2s ease",
-            }}
-          >
-            <img
-              src={photos[photoIdx]}
-              alt=""
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                maxWidth: "95%",
-                maxHeight: "95%",
-                objectFit: "contain",
-                boxShadow: "0 0 40px rgba(0,0,0,0.8)",
-              }}
-            />
-
-            <button
-              onClick={() => setLightboxOpen(false)}
-              style={{
-                position: "absolute",
-                top: "20px",
-                right: "20px",
-                background: "rgba(255,255,255,0.15)",
-                border: "none",
-                color: "#fff",
-                width: "44px",
-                height: "44px",
-                borderRadius: "50%",
-                cursor: "pointer",
-                fontSize: "22px",
+                fontWeight: "600",
                 backdropFilter: "blur(8px)",
               }}
             >
-              ✕
-            </button>
-
-            {photos.length > 1 && (
-              <>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    prevPhoto();
-                  }}
-                  style={{
-                    position: "absolute",
-                    left: "20px",
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    background: "rgba(255,255,255,0.15)",
-                    border: "none",
-                    color: "#fff",
-                    width: "48px",
-                    height: "48px",
-                    borderRadius: "50%",
-                    cursor: "pointer",
-                    fontSize: "24px",
-                    backdropFilter: "blur(8px)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  ‹
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    nextPhoto();
-                  }}
-                  style={{
-                    position: "absolute",
-                    right: "20px",
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    background: "rgba(255,255,255,0.15)",
-                    border: "none",
-                    color: "#fff",
-                    width: "48px",
-                    height: "48px",
-                    borderRadius: "50%",
-                    cursor: "pointer",
-                    fontSize: "24px",
-                    backdropFilter: "blur(8px)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  ›
-                </button>
-              </>
-            )}
-
-            {photos.length > 1 && (
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: "20px",
-                  left: "50%",
-                  transform: "translateX(-50%)",
-                  background: "rgba(0,0,0,0.6)",
-                  borderRadius: "8px",
-                  padding: "6px 14px",
-                  fontSize: "13px",
-                  color: "#fff",
-                  fontWeight: "600",
-                  backdropFilter: "blur(8px)",
-                }}
-              >
-                {photoIdx + 1} / {photos.length}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ─── MODALO TURINYS ─── */}
-        <div style={{ padding: "20px 22px 0" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
-            <div style={{ display: "flex", gap: "5px", flexWrap: "wrap" }}>
-              <Pill color={isLost ? G.lost : G.found} small>
-                {isLost ? `⚠ ${LT.lost}` : `◉ ${LT.found}`}
-              </Pill>
-              <Pill color={accent} small>
-                {item.tag}
-              </Pill>
-              {item.blurred && <BlurBadge />}
+              {photoIdx + 1} / {photos.length}
             </div>
-            <button
-              onClick={onClose}
-              style={{
-                background: "rgba(255,255,255,0.1)",
-                border: "none",
-                color: G.text,
-                width: "30px",
-                height: "30px",
-                borderRadius: "50%",
-                cursor: "pointer",
-              }}
-            >
-              ✕
-            </button>
-          </div>
-
-          <div style={{ fontSize: "21px", fontWeight: "800", color: G.text, marginBottom: "4px", fontFamily: G.serif }}>{item.title}</div>
-          <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.38)", marginBottom: "14px" }}>
-            ◎ {item.city} · {item.date}
-          </div>
-
-          <div style={{ display: "flex", gap: "2px", background: "rgba(0,0,0,0.3)", borderRadius: "10px", padding: "3px" }}>
-            {[
-              ["info", LT.details],
-              ["verify", LT.verification],
-              ["contact", LT.contact],
-            ].map(([id, label]) => (
-              <button
-                key={id}
-                onClick={() => setTab(id)}
-                style={{
-                  flex: 1,
-                  padding: "7px 4px",
-                  border: "none",
-                  borderRadius: "8px",
-                  background: tab === id ? accent : "transparent",
-                  color: tab === id ? "#fff" : G.muted,
-                  fontSize: "11px",
-                  fontWeight: "700",
-                  cursor: "pointer",
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ overflowY: "auto", padding: "14px 22px 22px", flex: 1 }}>
-          {tab === "info" && (
-            <>
-              <div style={{ fontSize: "14px", color: "rgba(255,255,255,0.7)", lineHeight: 1.7, marginBottom: "13px" }}>{item.description}</div>
-              <div style={{ background: "rgba(0,0,0,0.25)", borderRadius: "10px", padding: "12px" }}>
-                <div style={{ fontSize: "10px", color: G.muted, marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                  {LT.placeAndTime}
-                </div>
-                <div style={{ fontSize: "13px", color: G.text }}>{item.location}</div>
-                <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.38)", marginTop: "3px" }}>
-                  {item.city} · {item.date}
-                </div>
-              </div>
-              {item.geoPin && (
-                <div style={{ marginTop: "12px" }}>
-                  <LeafletMap pin={item.geoPin} buffer={item.geoBuffer} interactive={false} height={160} />
-                </div>
-              )}
-            </>
-          )}
-
-          {tab === "verify" && (
-            <>
-              <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.55)", marginBottom: "13px", lineHeight: 1.6 }}>{LT.verifyText}</div>
-              {item.secretQuestion && (
-                <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: "10px", padding: "13px", marginBottom: "11px" }}>
-                  <div style={{ fontSize: "10px", color: G.muted, marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                    {LT.secretQuestionLabel}
-                  </div>
-                  <div style={{ fontSize: "14px", color: G.text, fontWeight: "600" }}>{item.secretQuestion}</div>
-                </div>
-              )}
-              <textarea
-                placeholder={LT.yourAnswer}
-                style={{
-                  width: "100%",
-                  background: "rgba(255,255,255,0.06)",
-                  border: `1px solid ${G.border}`,
-                  borderRadius: "10px",
-                  padding: "11px",
-                  color: G.text,
-                  fontSize: "13px",
-                  resize: "none",
-                  height: "80px",
-                  outline: "none",
-                  boxSizing: "border-box",
-                  fontFamily: G.sans,
-                }}
-              />
-              <button
-                style={{
-                  marginTop: "10px",
-                  width: "100%",
-                  background: accent,
-                  border: "none",
-                  color: G.text,
-                  padding: "12px",
-                  borderRadius: "10px",
-                  fontSize: "13px",
-                  fontWeight: "700",
-                  cursor: "pointer",
-                }}
-              >
-                {LT.sendAnswer}
-              </button>
-            </>
-          )}
-
-          {tab === "contact" && (
-            <>
-              <div style={{ display: "flex", flexDirection: "column", gap: "7px", marginBottom: "14px" }}>
-                {[
-                  [`💬 ${LT.chat}`, LT.chatAnon, G.found],
-                  [`📞 ${LT.phone}`, LT.afterVerify, G.success],
-                  [`✉️ ${LT.email}`, LT.afterVerify, "#2980b9"],
-                ].map(([label, sub, color], i) => (
-                  <div
-                    key={i}
-                    style={{
-                      background: "rgba(0,0,0,0.22)",
-                      borderRadius: "10px",
-                      padding: "11px",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "10px",
-                    }}
-                  >
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: "13px", fontWeight: "600", color: G.text }}>{label}</div>
-                      <div style={{ fontSize: "11px", color: G.muted }}>{sub}</div>
-                    </div>
-                    <button
-                      style={{
-                        background: color,
-                        border: "none",
-                        color: G.text,
-                        padding: "6px 12px",
-                        borderRadius: "7px",
-                        fontSize: "11px",
-                        fontWeight: "700",
-                        cursor: "pointer",
-                      }}
-                    >
-                      {LT.write}
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              <div
-                style={{
-                  background: "rgba(0,0,0,0.3)",
-                  borderRadius: "10px",
-                  padding: "10px",
-                  minHeight: "88px",
-                  marginBottom: "10px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "7px",
-                }}
-              >
-                {msgs.map((m, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      alignSelf: m.from === "me" ? "flex-end" : m.from === "system" ? "center" : "flex-start",
-                      background: m.from === "me" ? accent : m.from === "system" ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.1)",
-                      padding: "7px 11px",
-                      borderRadius: "9px",
-                      fontSize: "12px",
-                      color: m.from === "system" ? G.muted : G.text,
-                      maxWidth: "82%",
-                    }}
-                  >
-                    {m.text}
-                  </div>
-                ))}
-              </div>
-
-              <div style={{ display: "flex", gap: "7px" }}>
-                <input
-                  value={chatMsg}
-                  onChange={(e) => setChatMsg(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && send()}
-                  placeholder={LT.chatPlaceholder}
-                  style={{
-                    flex: 1,
-                    background: "rgba(255,255,255,0.06)",
-                    border: `1px solid ${G.border}`,
-                    borderRadius: "9px",
-                    padding: "9px 12px",
-                    color: G.text,
-                    fontSize: "13px",
-                    outline: "none",
-                  }}
-                />
-                <button
-                  onClick={send}
-                  style={{
-                    background: accent,
-                    border: "none",
-                    color: G.text,
-                    padding: "9px 14px",
-                    borderRadius: "9px",
-                    cursor: "pointer",
-                  }}
-                >
-                  →
-                </button>
-              </div>
-            </>
           )}
         </div>
-      </div>
-    </div>
+      )}
+    </>
   );
 }
-
 // ─── API RAKTO JUOSTA ─────────────────────────────────────────────────────────
 function ApiKeyBanner({ onDismiss }) {
   const [key, setKey] = useState("");
