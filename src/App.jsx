@@ -233,53 +233,77 @@ async function compressImage(file, maxPx = 1200, quality = 0.78) {
   });
 }
 
-// ─── EXIF GEOLOKACIJOS SKAITYMAS ──────────────────────────────────────────────
-function readExifGps(file) {
+// ─── EXIF GEOLOKACIJOS SKAITYMAS (PA taisytas - veikia!) ─────────────────────
+async function readExifGps(file) {
   return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const view = new DataView(e.target.result);
-        if (view.getUint16(0, false) !== 0xffd8) {
-          resolve(null);
-          return;
-        }
-        let offset = 2;
-        while (offset < view.byteLength) {
-          const marker = view.getUint16(offset, false);
-          offset += 2;
-          if (marker === 0xffe1) {
-            const len = view.getUint16(offset, false);
-            const exifStr = String.fromCharCode(...new Uint8Array(e.target.result, offset + 10, 4));
-            if (exifStr !== "Exif") {
-              resolve(null);
-              return;
-            }
-            resolve(null);
-            return;
-          }
-          if ((marker & 0xff00) !== 0xff00) break;
-          offset += view.getUint16(offset, false);
-        }
-      } catch {
-        /* ignore */
-      }
-      resolve(null);
-    };
-    reader.readAsArrayBuffer(file.slice(0, 64 * 1024));
+    // Įkeliam exifreader biblioteką iš CDN
+    if (!window.EXIFReader) {
+      const script = document.createElement("script");
+      script.src = "https://unpkg.com/exifreader@4.22.0/dist/exifreader.js";
+      script.onload = () => parseExif(file, resolve);
+      script.onerror = () => resolve(null);
+      document.head.appendChild(script);
+    } else {
+      parseExif(file, resolve);
+    }
   });
+}
+
+function parseExif(file, resolve) {
+  window.EXIFReader.load(file)
+    .then((tags) => {
+      if (!tags.GPSLatitude || !tags.GPSLongitude) {
+        resolve(null);
+        return;
+      }
+
+      const lat = convertGpsToDecimal(tags.GPSLatitude, tags.GPSLatitudeRef);
+      const lng = convertGpsToDecimal(tags.GPSLongitude, tags.GPSLongitudeRef);
+
+      if (lat !== null && lng !== null) {
+        resolve({ lat, lng });
+      } else {
+        resolve(null);
+      }
+    })
+    .catch(() => resolve(null));
+}
+
+function convertGpsToDecimal(gpsValue, gpsRef) {
+  if (!gpsValue || gpsValue.length < 3) return null;
+
+  const degrees = gpsValue[0]?.numerator / gpsValue[0]?.denominator;
+  const minutes = gpsValue[1]?.numerator / gpsValue[1]?.denominator;
+  const seconds = gpsValue[2]?.numerator / gpsValue[2]?.denominator;
+
+  if (isNaN(degrees) || isNaN(minutes) || isNaN(seconds)) return null;
+
+  let decimal = degrees + (minutes / 60) + (seconds / 3600);
+
+  if (gpsRef === "S" || gpsRef === "W") {
+    decimal = -decimal;
+  }
+
+  return decimal;
 }
 
 // ─── REVERSE GEOCODING ────────────────────────────────────────────────────────
 async function reverseGeocode(lat, lng) {
   try {
-    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=lt`, {
-      headers: { "User-Agent": "FindIt-App/1.0" },
-    });
+    const r = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=lt`,
+      {
+        headers: { "User-Agent": "FindIt-App/1.0" },
+      }
+    );
     const d = await r.json();
     const a = d.address || {};
     const parts = [a.road, a.suburb || a.neighbourhood, a.city || a.town || a.village].filter(Boolean);
-    return parts.slice(0, 2).join(", ") || d.display_name?.split(",").slice(0, 2).join(",") || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+    return (
+      parts.slice(0, 2).join(", ") ||
+      d.display_name?.split(",").slice(0, 2).join(",") ||
+      `${lat.toFixed(4)}, ${lng.toFixed(4)}`
+    );
   } catch {
     return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
   }
@@ -320,45 +344,107 @@ async function classifyImageWithGemini(base64Image, mimeType, itemType = "found"
 "secretQuestions": ["3 konkretūs slaptieji klausimai lietuviškai pagal šio daikto požymius"]
 }`;
 
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${effectiveKey}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64Image } }] }],
-      generationConfig: { response_mime_type: "application/json" },
-    }),
-  });
-
-  if (!response.ok) {
-    const errBody = await response.json().catch(() => ({}));
-    throw new Error(`API ${response.status}: ${errBody?.error?.message || "Klaida"}`);
-  }
-
-  const data = await response.json();
-  const text = data.candidates[0].content.parts[0].text.trim();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
 
   try {
-    const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
-    if (!parsed.secretQuestions || parsed.secretQuestions.length < 3) {
-      parsed.secretQuestions = SECRET_QUESTIONS[parsed.category] || SECRET_QUESTIONS.other;
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${effectiveKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                { text: prompt },
+                { inline_data: { mime_type: mimeType, data: base64Image } },
+              ],
+            },
+          ],
+          generationConfig: { response_mime_type: "application/json" },
+        }),
+        signal: controller.signal,
+      }
+    );
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errBody = await response.json().catch(() => ({}));
+      if (response.status === 429) {
+        throw new Error("Per daug užklausų. Palaukite minutę.");
+      }
+      throw new Error(`API ${response.status}: ${errBody?.error?.message || "Klaida"}`);
     }
-    return parsed;
-  } catch {
-    throw new Error("Neteisingas AI atsakymo formatas. Bandykite dar kartą.");
+
+    const data = await response.json();
+    const text = data.candidates[0].content.parts[0].text.trim();
+
+    try {
+      const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
+      if (!parsed.secretQuestions || parsed.secretQuestions.length < 3) {
+        parsed.secretQuestions = SECRET_QUESTIONS[parsed.category] || SECRET_QUESTIONS.other;
+      }
+      return parsed;
+    } catch {
+      throw new Error("Neteisingas AI atsakymo formatas. Bandykite dar kartą.");
+    }
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err.name === "AbortError") {
+      throw new Error("Užklausos laikas baigėsi. Patikrinkite ryšį.");
+    }
+    throw err;
   }
 }
 
 // ─── MAŽOS KOMPONENTES ────────────────────────────────────────────────────────
 const Pill = ({ color = G.found, children, small }) => (
-  <span style={{ background: color, color: "#fff", fontSize: small ? "10px" : "11px", fontWeight: "700", letterSpacing: "0.07em", padding: small ? "3px 7px" : "4px 10px", borderRadius: "4px", textTransform: "uppercase", whiteSpace: "nowrap" }}>{children}</span>
+  <span
+    style={{
+      background: color,
+      color: "#fff",
+      fontSize: small ? "10px" : "11px",
+      fontWeight: "700",
+      letterSpacing: "0.07em",
+      padding: small ? "3px 7px" : "4px 10px",
+      borderRadius: "4px",
+      textTransform: "uppercase",
+      whiteSpace: "nowrap",
+    }}
+  >
+    {children}
+  </span>
 );
 
 const BlurBadge = () => (
-  <span style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.18)", borderRadius: "4px", fontSize: "10px", padding: "2px 6px", color: "rgba(255,255,255,0.6)" }}>◎ paslėpta</span>
+  <span
+    style={{
+      background: "rgba(255,255,255,0.1)",
+      border: "1px solid rgba(255,255,255,0.18)",
+      borderRadius: "4px",
+      fontSize: "10px",
+      padding: "2px 6px",
+      color: "rgba(255,255,255,0.6)",
+    }}
+  >
+    ◎ paslėpta
+  </span>
 );
 
 const Spinner = ({ size = 20, color = G.found }) => (
-  <div style={{ width: size, height: size, border: `2px solid rgba(255,255,255,0.1)`, borderTopColor: color, borderRadius: "50%", animation: "spin 0.7s linear infinite", flexShrink: 0 }} />
+  <div
+    style={{
+      width: size,
+      height: size,
+      border: `2px solid rgba(255,255,255,0.1)`,
+      borderTopColor: color,
+      borderRadius: "50%",
+      animation: "spin 0.7s linear infinite",
+      flexShrink: 0,
+    }}
+  />
 );
 
 // ─── NUOTRAUKŲ GALERIJA ───────────────────────────────────────────────────────
@@ -379,14 +465,75 @@ function PhotoGallery({ photos, onAdd, onRemove, maxPhotos = 4 }) {
     <div>
       <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "8px" }}>
         {photos.map((src, i) => (
-          <div key={i} style={{ position: "relative", width: "80px", height: "80px", borderRadius: "10px", overflow: "hidden", flexShrink: 0 }}>
+          <div
+            key={i}
+            style={{
+              position: "relative",
+              width: "80px",
+              height: "80px",
+              borderRadius: "10px",
+              overflow: "hidden",
+              flexShrink: 0,
+            }}
+          >
             <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-            <button onClick={() => onRemove(i)} style={{ position: "absolute", top: "3px", right: "3px", background: "rgba(0,0,0,0.7)", border: "none", color: "#fff", width: "20px", height: "20px", borderRadius: "50%", cursor: "pointer", fontSize: "11px", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
-            {i === 0 && <div style={{ position: "absolute", bottom: "3px", left: "3px", background: "rgba(99,102,241,0.85)", borderRadius: "3px", fontSize: "8px", color: "#fff", padding: "1px 4px", fontWeight: "700" }}>AI</div>}
+            <button
+              onClick={() => onRemove(i)}
+              style={{
+                position: "absolute",
+                top: "3px",
+                right: "3px",
+                background: "rgba(0,0,0,0.7)",
+                border: "none",
+                color: "#fff",
+                width: "20px",
+                height: "20px",
+                borderRadius: "50%",
+                cursor: "pointer",
+                fontSize: "11px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              ✕
+            </button>
+            {i === 0 && (
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: "3px",
+                  left: "3px",
+                  background: "rgba(99,102,241,0.85)",
+                  borderRadius: "3px",
+                  fontSize: "8px",
+                  color: "#fff",
+                  padding: "1px 4px",
+                  fontWeight: "700",
+                }}
+              >
+                AI
+              </div>
+            )}
           </div>
         ))}
         {photos.length < maxPhotos && (
-          <div onClick={() => inputRef.current?.click()} style={{ width: "80px", height: "80px", borderRadius: "10px", border: "2px dashed rgba(255,255,255,0.2)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", cursor: "pointer", gap: "4px", flexShrink: 0 }}>
+          <div
+            onClick={() => inputRef.current?.click()}
+            style={{
+              width: "80px",
+              height: "80px",
+              borderRadius: "10px",
+              border: "2px dashed rgba(255,255,255,0.2)",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              gap: "4px",
+              flexShrink: 0,
+            }}
+          >
             <span style={{ fontSize: "20px", color: G.muted }}>+</span>
             <span style={{ fontSize: "9px", color: G.muted }}>{LT.photoAdd.replace("+ ", "")}</span>
           </div>
@@ -579,11 +726,36 @@ function GeoStep({ onDone, photoFile }) {
             <div
               key={opt.id}
               onClick={() => handleSource(opt.id)}
-              style={{ background: "rgba(255,255,255,0.03)", border: `1px solid ${G.border}`, borderRadius: "12px", padding: "13px", cursor: "pointer", display: "flex", alignItems: "center", gap: "12px", marginBottom: "8px", transition: "all 0.15s" }}
+              style={{
+                background: "rgba(255,255,255,0.03)",
+                border: `1px solid ${G.border}`,
+                borderRadius: "12px",
+                padding: "13px",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: "12px",
+                marginBottom: "8px",
+                transition: "all 0.15s",
+              }}
               onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(99,102,241,0.1)")}
               onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.03)")}
             >
-              <span style={{ fontSize: "20px", width: "36px", height: "36px", background: "rgba(99,102,241,0.12)", borderRadius: "9px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{opt.icon}</span>
+              <span
+                style={{
+                  fontSize: "20px",
+                  width: "36px",
+                  height: "36px",
+                  background: "rgba(99,102,241,0.12)",
+                  borderRadius: "9px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
+              >
+                {opt.icon}
+              </span>
               <div>
                 <div style={{ fontSize: "13px", fontWeight: "700", color: G.text }}>{opt.label}</div>
                 <div style={{ fontSize: "11px", color: G.muted }}>{opt.sub}</div>
@@ -591,8 +763,34 @@ function GeoStep({ onDone, photoFile }) {
               <span style={{ color: G.muted, marginLeft: "auto" }}>›</span>
             </div>
           ))}
-          {geoError && <div style={{ fontSize: "11px", color: G.warn, marginTop: "8px", padding: "8px 12px", background: "rgba(245,166,35,0.1)", borderRadius: "8px" }}>⚠ {geoError}</div>}
-          <button onClick={() => onDone({ pin: null, buffer: null, address: addressText })} style={{ width: "100%", marginTop: "10px", background: "rgba(255,255,255,0.04)", border: `1px solid ${G.border}`, borderRadius: "10px", padding: "11px", color: G.muted, fontSize: "13px", cursor: "pointer" }}>
+          {geoError && (
+            <div
+              style={{
+                fontSize: "11px",
+                color: G.warn,
+                marginTop: "8px",
+                padding: "8px 12px",
+                background: "rgba(245,166,35,0.1)",
+                borderRadius: "8px",
+              }}
+            >
+              ⚠ {geoError}
+            </div>
+          )}
+          <button
+            onClick={() => onDone({ pin: null, buffer: null, address: addressText })}
+            style={{
+              width: "100%",
+              marginTop: "10px",
+              background: "rgba(255,255,255,0.04)",
+              border: `1px solid ${G.border}`,
+              borderRadius: "10px",
+              padding: "11px",
+              color: G.muted,
+              fontSize: "13px",
+              cursor: "pointer",
+            }}
+          >
             {LT.geoSkip}
           </button>
         </>
@@ -609,14 +807,42 @@ function GeoStep({ onDone, photoFile }) {
         <>
           <div style={{ marginBottom: "10px" }}>
             <LeafletMap pin={pin} buffer={buffer} onPinChange={handlePinChange} interactive={true} height={200} />
-            {!pin && <div style={{ fontSize: "11px", color: G.muted, textAlign: "center", marginTop: "6px" }}>{LT.geoSetPin}</div>}
+            {!pin && (
+              <div style={{ fontSize: "11px", color: G.muted, textAlign: "center", marginTop: "6px" }}>{LT.geoSetPin}</div>
+            )}
           </div>
 
           {pin && (
             <>
               <div style={{ display: "flex", gap: "6px", marginBottom: "10px", alignItems: "center" }}>
-                <div style={{ flex: 1, background: "rgba(255,255,255,0.05)", borderRadius: "8px", padding: "7px 11px", fontSize: "11px", color: G.muted, fontFamily: "monospace" }}>📍 {addressText || `${pin.lat.toFixed(4)}, ${pin.lng.toFixed(4)}`}</div>
-                <button onClick={() => { setPin(null); setAddressText(""); }} style={{ background: "rgba(231,76,60,0.12)", border: `1px solid rgba(231,76,60,0.3)`, borderRadius: "8px", color: G.lost, padding: "7px 11px", fontSize: "11px", cursor: "pointer" }}>
+                <div
+                  style={{
+                    flex: 1,
+                    background: "rgba(255,255,255,0.05)",
+                    borderRadius: "8px",
+                    padding: "7px 11px",
+                    fontSize: "11px",
+                    color: G.muted,
+                    fontFamily: "monospace",
+                  }}
+                >
+                  📍 {addressText || `${pin.lat.toFixed(4)}, ${pin.lng.toFixed(4)}`}
+                </div>
+                <button
+                  onClick={() => {
+                    setPin(null);
+                    setAddressText("");
+                  }}
+                  style={{
+                    background: "rgba(231,76,60,0.12)",
+                    border: `1px solid rgba(231,76,60,0.3)`,
+                    borderRadius: "8px",
+                    color: G.lost,
+                    padding: "7px 11px",
+                    fontSize: "11px",
+                    cursor: "pointer",
+                  }}
+                >
                   {LT.geoReset}
                 </button>
               </div>
@@ -631,7 +857,18 @@ function GeoStep({ onDone, photoFile }) {
                   <button
                     key={id}
                     onClick={() => handleBufferChoice(id)}
-                    style={{ flex: 1, background: bufferChoice === id ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.04)", border: `1px solid ${bufferChoice === id ? "rgba(255,255,255,0.35)" : G.border}`, borderRadius: "8px", color: bufferChoice === id ? G.text : G.muted, padding: "8px 4px", fontSize: "10px", fontWeight: bufferChoice === id ? "700" : "400", cursor: "pointer", lineHeight: 1.3 }}
+                    style={{
+                      flex: 1,
+                      background: bufferChoice === id ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.04)",
+                      border: `1px solid ${bufferChoice === id ? "rgba(255,255,255,0.35)" : G.border}`,
+                      borderRadius: "8px",
+                      color: bufferChoice === id ? G.text : G.muted,
+                      padding: "8px 4px",
+                      fontSize: "10px",
+                      fontWeight: bufferChoice === id ? "700" : "400",
+                      cursor: "pointer",
+                      lineHeight: 1.3,
+                    }}
                   >
                     {label}
                     {warn ? <span style={{ display: "block", fontSize: "9px", color: G.lost }}>⚠ {LT.geoExactWarn}</span> : null}
@@ -641,13 +878,59 @@ function GeoStep({ onDone, photoFile }) {
             </>
           )}
 
-          <input value={addressText} onChange={(e) => setAddressText(e.target.value)} placeholder={LT.geoAddressPlaceholder} style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: `1px solid ${G.border}`, borderRadius: "9px", padding: "10px 13px", color: G.text, fontSize: "13px", outline: "none", marginBottom: "12px", boxSizing: "border-box" }} />
+          <input
+            value={addressText}
+            onChange={(e) => setAddressText(e.target.value)}
+            placeholder={LT.geoAddressPlaceholder}
+            style={{
+              width: "100%",
+              background: "rgba(255,255,255,0.05)",
+              border: `1px solid ${G.border}`,
+              borderRadius: "9px",
+              padding: "10px 13px",
+              color: G.text,
+              fontSize: "13px",
+              outline: "none",
+              marginBottom: "12px",
+              boxSizing: "border-box",
+            }}
+          />
 
           <div style={{ display: "flex", gap: "7px" }}>
-            <button onClick={() => { setPhase("source"); setPin(null); }} style={{ flex: 1, background: "rgba(255,255,255,0.05)", border: "none", color: G.muted, padding: "12px", borderRadius: "10px", cursor: "pointer", fontSize: "13px" }}>
+            <button
+              onClick={() => {
+                setPhase("source");
+                setPin(null);
+              }}
+              style={{
+                flex: 1,
+                background: "rgba(255,255,255,0.05)",
+                border: "none",
+                color: G.muted,
+                padding: "12px",
+                borderRadius: "10px",
+                cursor: "pointer",
+                fontSize: "13px",
+              }}
+            >
               {LT.back}
             </button>
-            <button onClick={() => { if (pin || addressText) confirm(); }} style={{ flex: 2, background: pin || addressText ? G.found : "rgba(255,255,255,0.06)", border: "none", color: pin || addressText ? G.text : G.muted, padding: "12px", borderRadius: "10px", fontWeight: "700", fontSize: "13px", cursor: pin || addressText ? "pointer" : "default" }}>
+            <button
+              onClick={() => {
+                if (pin || addressText) confirm();
+              }}
+              style={{
+                flex: 2,
+                background: pin || addressText ? G.found : "rgba(255,255,255,0.06)",
+                border: "none",
+                color: pin || addressText ? G.text : G.muted,
+                padding: "12px",
+                borderRadius: "10px",
+                fontWeight: "700",
+                fontSize: "13px",
+                cursor: pin || addressText ? "pointer" : "default",
+              }}
+            >
               {LT.geoConfirm}
             </button>
           </div>
@@ -710,18 +993,50 @@ function AIPhotoAnalyzer({ onResult, onSkip, itemType }) {
             onDragLeave={() => setDragOver(false)}
             onDrop={handleDrop}
             onClick={() => inputRef.current?.click()}
-            style={{ border: `2px dashed ${dragOver ? G.found : "rgba(99,102,241,0.35)"}`, borderRadius: "16px", padding: "32px 20px", textAlign: "center", cursor: "pointer", background: dragOver ? "rgba(99,102,241,0.1)" : "rgba(99,102,241,0.05)", transition: "all 0.2s", marginBottom: "12px" }}
+            style={{
+              border: `2px dashed ${dragOver ? G.found : "rgba(99,102,241,0.35)"}`,
+              borderRadius: "16px",
+              padding: "32px 20px",
+              textAlign: "center",
+              cursor: "pointer",
+              background: dragOver ? "rgba(99,102,241,0.1)" : "rgba(99,102,241,0.05)",
+              transition: "all 0.2s",
+              marginBottom: "12px",
+            }}
           >
             <div style={{ fontSize: "34px", marginBottom: "10px" }}>⊙</div>
             <div style={{ fontSize: "15px", fontWeight: "700", color: G.text, marginBottom: "5px" }}>{LT.uploadPhoto}</div>
             <div style={{ fontSize: "12px", color: G.muted }}>{LT.uploadSub}</div>
-            <div style={{ marginTop: "12px", display: "inline-flex", alignItems: "center", gap: "6px", background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.3)", borderRadius: "8px", padding: "6px 12px" }}>
+            <div
+              style={{
+                marginTop: "12px",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                background: "rgba(99,102,241,0.15)",
+                border: "1px solid rgba(99,102,241,0.3)",
+                borderRadius: "8px",
+                padding: "6px 12px",
+              }}
+            >
               <span>✦</span>
               <span style={{ fontSize: "11px", color: "#818cf8", fontWeight: "600" }}>{LT.aiBadge}</span>
             </div>
           </div>
           <input ref={inputRef} type="file" accept="image/*" capture="environment" onChange={handleFile} style={{ display: "none" }} />
-          <button onClick={onSkip} style={{ width: "100%", background: "rgba(255,255,255,0.04)", border: `1px solid ${G.border}`, borderRadius: "10px", padding: "11px", color: G.muted, fontSize: "13px", cursor: "pointer" }}>
+          <button
+            onClick={onSkip}
+            style={{
+              width: "100%",
+              background: "rgba(255,255,255,0.04)",
+              border: `1px solid ${G.border}`,
+              borderRadius: "10px",
+              padding: "11px",
+              color: G.muted,
+              fontSize: "13px",
+              cursor: "pointer",
+            }}
+          >
             {LT.addWithoutPhoto}
           </button>
         </>
@@ -731,7 +1046,19 @@ function AIPhotoAnalyzer({ onResult, onSkip, itemType }) {
         <div style={{ animation: "fadeUp 0.3s ease" }}>
           <div style={{ position: "relative", marginBottom: "16px" }}>
             <img src={preview} alt="" style={{ width: "100%", maxHeight: "200px", objectFit: "cover", borderRadius: "12px", display: "block" }} />
-            <div style={{ position: "absolute", inset: 0, background: "rgba(6,10,15,0.72)", borderRadius: "12px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "12px" }}>
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                background: "rgba(6,10,15,0.72)",
+                borderRadius: "12px",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "12px",
+              }}
+            >
               <Spinner size={34} color={G.found} />
               <div style={{ fontSize: "14px", fontWeight: "700", color: G.text }}>{LT.aiAnalyzing}</div>
               <div style={{ fontSize: "12px", color: G.muted, animation: "pulse 1.2s infinite" }}>{LT.aiAnalyzingSub}</div>
@@ -741,21 +1068,61 @@ function AIPhotoAnalyzer({ onResult, onSkip, itemType }) {
       )}
 
       {phase === "result" && result && (
-        <div style={{ animation: "pop 0.35s cubic-bezier(0.16,1,0.3,1)" }}>
+        <div style={{ animation: "pop 0.35s cubic-bezier(0.16, 1, 0.3, 1)" }}>
           <div style={{ position: "relative", marginBottom: "14px" }}>
             <img src={preview} alt="" style={{ width: "100%", maxHeight: "180px", objectFit: "cover", borderRadius: "12px", display: "block" }} />
-            <div style={{ position: "absolute", bottom: "10px", left: "10px", background: "rgba(6,10,15,0.88)", backdropFilter: "blur(8px)", borderRadius: "8px", padding: "6px 10px", display: "flex", alignItems: "center", gap: "7px" }}>
+            <div
+              style={{
+                position: "absolute",
+                bottom: "10px",
+                left: "10px",
+                background: "rgba(6,10,15,0.88)",
+                backdropFilter: "blur(8px)",
+                borderRadius: "8px",
+                padding: "6px 10px",
+                display: "flex",
+                alignItems: "center",
+                gap: "7px",
+              }}
+            >
               <span style={{ color: G.found }}>✦</span>
               <span style={{ fontSize: "11px", color: G.text, fontWeight: "700" }}>
                 {LT.aiRecognized} · {result.confidence}%
               </span>
             </div>
-            <button onClick={() => { setPhase("idle"); setPreview(null); setResult(null); }} style={{ position: "absolute", top: "10px", right: "10px", background: "rgba(0,0,0,0.65)", border: "none", color: G.text, width: "28px", height: "28px", borderRadius: "50%", cursor: "pointer", fontSize: "14px" }}>
+            <button
+              onClick={() => {
+                setPhase("idle");
+                setPreview(null);
+                setResult(null);
+              }}
+              style={{
+                position: "absolute",
+                top: "10px",
+                right: "10px",
+                background: "rgba(0,0,0,0.65)",
+                border: "none",
+                color: G.text,
+                width: "28px",
+                height: "28px",
+                borderRadius: "50%",
+                cursor: "pointer",
+                fontSize: "14px",
+              }}
+            >
               ✕
             </button>
           </div>
 
-          <div style={{ background: catColors?.bg || "#1a1a2e", border: `1px solid ${catColors?.accent || G.found}44`, borderRadius: "14px", padding: "14px", marginBottom: "10px" }}>
+          <div
+            style={{
+              background: catColors?.bg || "#1a1a2e",
+              border: `1px solid ${catColors?.accent || G.found}44`,
+              borderRadius: "14px",
+              padding: "14px",
+              marginBottom: "10px",
+            }}
+          >
             <div style={{ display: "flex", gap: "7px", marginBottom: "8px", alignItems: "center", flexWrap: "wrap" }}>
               <Pill color={catColors?.accent || G.found} small>
                 {catInfo?.icon} {LT.categories[result.category] || result.category}
@@ -768,13 +1135,34 @@ function AIPhotoAnalyzer({ onResult, onSkip, itemType }) {
             <div style={{ fontSize: "12px", color: "rgba(255,255,255,0.65)", lineHeight: 1.6, marginBottom: "8px" }}>{result.description}</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginBottom: result.blur_suggestion ? "8px" : "0" }}>
               {(result.tags || []).map((t) => (
-                <span key={t} style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "5px", padding: "2px 8px", fontSize: "10px", color: G.muted }}>
+                <span
+                  key={t}
+                  style={{
+                    background: "rgba(255,255,255,0.07)",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: "5px",
+                    padding: "2px 8px",
+                    fontSize: "10px",
+                    color: G.muted,
+                  }}
+                >
                   #{t}
                 </span>
               ))}
             </div>
             {result.blur_suggestion && (
-              <div style={{ background: "rgba(245,166,35,0.12)", border: "1px solid rgba(245,166,35,0.3)", borderRadius: "8px", padding: "8px 11px", fontSize: "11px", color: G.warn, display: "flex", gap: "6px" }}>
+              <div
+                style={{
+                  background: "rgba(245,166,35,0.12)",
+                  border: "1px solid rgba(245,166,35,0.3)",
+                  borderRadius: "8px",
+                  padding: "8px 11px",
+                  fontSize: "11px",
+                  color: G.warn,
+                  display: "flex",
+                  gap: "6px",
+                }}
+              >
                 <span>⚠</span>
                 <span>
                   {LT.blurSuggestion} {result.blur_suggestion}
@@ -786,20 +1174,64 @@ function AIPhotoAnalyzer({ onResult, onSkip, itemType }) {
           <div style={{ marginBottom: "12px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
               <span style={{ fontSize: "11px", color: G.muted }}>{LT.confidence}</span>
-              <span style={{ fontSize: "11px", color: result.confidence >= 75 ? G.success : G.warn, fontWeight: "700", fontFamily: "monospace" }}>
+              <span
+                style={{
+                  fontSize: "11px",
+                  color: result.confidence >= 75 ? G.success : G.warn,
+                  fontWeight: "700",
+                  fontFamily: "monospace",
+                }}
+              >
                 {result.confidence}%
               </span>
             </div>
             <div style={{ height: "4px", background: "rgba(255,255,255,0.07)", borderRadius: "2px" }}>
-              <div style={{ height: "100%", width: `${result.confidence}%`, background: result.confidence >= 75 ? G.success : G.warn, borderRadius: "2px", transition: "width 0.8s cubic-bezier(0.16,1,0.3,1)" }} />
+              <div
+                style={{
+                  height: "100%",
+                  width: `${result.confidence}%`,
+                  background: result.confidence >= 75 ? G.success : G.warn,
+                  borderRadius: "2px",
+                  transition: "width 0.8s cubic-bezier(0.16, 1, 0.3, 1)",
+                }}
+              />
             </div>
           </div>
 
           <div style={{ display: "flex", gap: "8px" }}>
-            <button onClick={() => onResult(result, preview, rawFile)} style={{ flex: 2, background: `linear-gradient(135deg, ${G.found}, #8b5cf6)`, border: "none", color: G.text, padding: "12px", borderRadius: "11px", fontWeight: "800", fontSize: "13px", cursor: "pointer" }}>
+            <button
+              onClick={() => onResult(result, preview, rawFile)}
+              style={{
+                flex: 2,
+                background: `linear-gradient(135deg, ${G.found}, #8b5cf6)`,
+                border: "none",
+                color: G.text,
+                padding: "12px",
+                borderRadius: "11px",
+                fontWeight: "800",
+                fontSize: "13px",
+                cursor: "pointer",
+              }}
+            >
               {LT.useResult}
             </button>
-            <button onClick={() => { setPhase("idle"); setPreview(null); setResult(null); }} style={{ flex: 1, background: "rgba(255,255,255,0.05)", border: `1px solid ${G.border}`, color: G.muted, padding: "12px", borderRadius: "11px", fontSize: "12px", cursor: "pointer" }}>
+            <button
+              onClick={() => {
+                setPhase("idle");
+                setPreview(null);
+                setResult(null);
+              }}
+              style={{
+                flex: 1,
+                background: "rgba(255,255,255,0.05)",
+                border: `1px solid ${G.border}`,
+                color: G.muted,
+                padding: "12px",
+                borderRadius: "11px",
+                fontSize: "12px",
+                cursor: "pointer",
+              }}
+            >
               {LT.anotherPhoto}
             </button>
           </div>
@@ -808,16 +1240,50 @@ function AIPhotoAnalyzer({ onResult, onSkip, itemType }) {
 
       {phase === "error" && (
         <div style={{ animation: "fadeUp 0.3s ease" }}>
-          <div style={{ background: "rgba(231,76,60,0.1)", border: "1px solid rgba(231,76,60,0.3)", borderRadius: "12px", padding: "18px", textAlign: "center", marginBottom: "12px" }}>
+          <div
+            style={{
+              background: "rgba(231,76,60,0.1)",
+              border: "1px solid rgba(231,76,60,0.3)",
+              borderRadius: "12px",
+              padding: "18px",
+              textAlign: "center",
+              marginBottom: "12px",
+            }}
+          >
             <div style={{ fontSize: "26px", marginBottom: "7px" }}>⚠</div>
             <div style={{ fontSize: "13px", color: G.lost, fontWeight: "700", marginBottom: "5px" }}>{LT.recognitionError}</div>
             <div style={{ fontSize: "12px", color: G.muted, lineHeight: 1.6 }}>{error}</div>
           </div>
           <div style={{ display: "flex", gap: "8px" }}>
-            <button onClick={() => setPhase("idle")} style={{ flex: 1, background: G.found, border: "none", color: G.text, padding: "12px", borderRadius: "10px", fontWeight: "700", fontSize: "13px", cursor: "pointer" }}>
+            <button
+              onClick={() => setPhase("idle")}
+              style={{
+                flex: 1,
+                background: G.found,
+                border: "none",
+                color: G.text,
+                padding: "12px",
+                borderRadius: "10px",
+                fontWeight: "700",
+                fontSize: "13px",
+                cursor: "pointer",
+              }}
+            >
               {LT.tryAgain}
             </button>
-            <button onClick={onSkip} style={{ flex: 1, background: "rgba(255,255,255,0.05)", border: `1px solid ${G.border}`, color: G.muted, padding: "12px", borderRadius: "10px", fontSize: "13px", cursor: "pointer" }}>
+            <button
+              onClick={onSkip}
+              style={{
+                flex: 1,
+                background: "rgba(255,255,255,0.05)",
+                border: `1px solid ${G.border}`,
+                color: G.muted,
+                padding: "12px",
+                borderRadius: "10px",
+                fontSize: "13px",
+                cursor: "pointer",
+              }}
+            >
               {LT.withoutPhoto}
             </button>
           </div>
@@ -848,7 +1314,9 @@ function AddModal({ onClose, onAdd, defaultType }) {
   });
 
   const accent = type === "found" ? G.found : G.lost;
-  const availableQuestions = aiResult?.secretQuestions?.length ? aiResult.secretQuestions : SECRET_QUESTIONS[form.category] || SECRET_QUESTIONS.other;
+  const availableQuestions = aiResult?.secretQuestions?.length
+    ? aiResult.secretQuestions
+    : SECRET_QUESTIONS[form.category] || SECRET_QUESTIONS.other;
 
   const handleAiResult = (result, previewUrl, file) => {
     setAiResult(result);
@@ -891,17 +1359,63 @@ function AddModal({ onClose, onAdd, defaultType }) {
   };
 
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", backdropFilter: "blur(12px)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: G.card, border: `1px solid ${G.border}`, borderRadius: "24px", padding: "26px", maxWidth: "500px", width: "100%", maxHeight: "93vh", overflowY: "auto" }}>
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.85)",
+        backdropFilter: "blur(12px)",
+        zIndex: 300,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "16px",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: G.card,
+          border: `1px solid ${G.border}`,
+          borderRadius: "24px",
+          padding: "26px",
+          maxWidth: "500px",
+          width: "100%",
+          maxHeight: "93vh",
+          overflowY: "auto",
+        }}
+      >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
           <div style={{ fontSize: "19px", fontWeight: "800", color: G.text, fontFamily: G.serif }}>{LT.addTitle[type]}</div>
-          <button onClick={onClose} style={{ background: "rgba(255,255,255,0.08)", border: "none", color: G.text, width: "30px", height: "30px", borderRadius: "50%", cursor: "pointer" }}>✕</button>
+          <button
+            onClick={onClose}
+            style={{
+              background: "rgba(255,255,255,0.08)",
+              border: "none",
+              color: G.text,
+              width: "30px",
+              height: "30px",
+              borderRadius: "50%",
+              cursor: "pointer",
+            }}
+          >
+            ✕
+          </button>
         </div>
 
         <div style={{ display: "flex", gap: "3px", marginBottom: "22px" }}>
           {LT.steps.map((s, i) => (
             <div key={s} style={{ flex: 1 }}>
-              <div style={{ height: "3px", borderRadius: "2px", background: i < step ? accent : "rgba(255,255,255,0.1)", marginBottom: "4px", transition: "background 0.3s" }} />
+              <div
+                style={{
+                  height: "3px",
+                  borderRadius: "2px",
+                  background: i < step ? accent : "rgba(255,255,255,0.1)",
+                  marginBottom: "4px",
+                  transition: "background 0.3s",
+                }}
+              />
               <div style={{ fontSize: "9px", color: i + 1 === step ? "#818cf8" : G.dim, textAlign: "center" }}>{s}</div>
             </div>
           ))}
@@ -914,7 +1428,21 @@ function AddModal({ onClose, onAdd, defaultType }) {
                 ["found", LT.iFound, G.found],
                 ["lost", LT.iLost, G.lost],
               ].map(([id, label, color]) => (
-                <button key={id} onClick={() => setType(id)} style={{ flex: 1, padding: "10px", border: `1px solid ${type === id ? color : G.border}`, borderRadius: "10px", background: type === id ? `${color}22` : "rgba(255,255,255,0.03)", color: type === id ? G.text : G.muted, fontSize: "13px", fontWeight: "700", cursor: "pointer" }}>
+                <button
+                  key={id}
+                  onClick={() => setType(id)}
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    border: `1px solid ${type === id ? color : G.border}`,
+                    borderRadius: "10px",
+                    background: type === id ? `${color}22` : "rgba(255,255,255,0.03)",
+                    color: type === id ? G.text : G.muted,
+                    fontSize: "13px",
+                    fontWeight: "700",
+                    cursor: "pointer",
+                  }}
+                >
                   {label}
                 </button>
               ))}
@@ -926,7 +1454,18 @@ function AddModal({ onClose, onAdd, defaultType }) {
         {step === 2 && (
           <>
             {aiResult && (
-              <div style={{ background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)", borderRadius: "10px", padding: "10px 13px", marginBottom: "14px", display: "flex", gap: "9px", alignItems: "center" }}>
+              <div
+                style={{
+                  background: "rgba(99,102,241,0.1)",
+                  border: "1px solid rgba(99,102,241,0.25)",
+                  borderRadius: "10px",
+                  padding: "10px 13px",
+                  marginBottom: "14px",
+                  display: "flex",
+                  gap: "9px",
+                  alignItems: "center",
+                }}
+              >
                 <span>✦</span>
                 <div>
                   <div style={{ fontSize: "10px", color: "#818cf8", marginBottom: "2px", fontWeight: "700" }}>{LT.aiFilledAuto}</div>
@@ -937,31 +1476,121 @@ function AddModal({ onClose, onAdd, defaultType }) {
               </div>
             )}
 
-            <input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} placeholder={LT.name} style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: `1px solid ${G.border}`, borderRadius: "9px", padding: "10px 13px", color: G.text, fontSize: "13px", outline: "none", marginBottom: "9px", boxSizing: "border-box" }} />
-            <textarea value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} placeholder={LT.description} style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: `1px solid ${G.border}`, borderRadius: "9px", padding: "10px 13px", color: G.text, fontSize: "13px", outline: "none", marginBottom: "9px", boxSizing: "border-box", resize: "none", height: "76px", fontFamily: G.sans }} />
+            <input
+              value={form.title}
+              onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+              placeholder={LT.name}
+              style={{
+                width: "100%",
+                background: "rgba(255,255,255,0.05)",
+                border: `1px solid ${G.border}`,
+                borderRadius: "9px",
+                padding: "10px 13px",
+                color: G.text,
+                fontSize: "13px",
+                outline: "none",
+                marginBottom: "9px",
+                boxSizing: "border-box",
+              }}
+            />
+            <textarea
+              value={form.description}
+              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+              placeholder={LT.description}
+              style={{
+                width: "100%",
+                background: "rgba(255,255,255,0.05)",
+                border: `1px solid ${G.border}`,
+                borderRadius: "9px",
+                padding: "10px 13px",
+                color: G.text,
+                fontSize: "13px",
+                outline: "none",
+                marginBottom: "9px",
+                boxSizing: "border-box",
+                resize: "none",
+                height: "76px",
+                fontFamily: G.sans,
+              }}
+            />
 
             <div style={{ fontSize: "11px", color: G.muted, marginBottom: "7px" }}>{LT.categoryLabel}</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "5px", marginBottom: "12px" }}>
               {CATEGORIES.filter((c) => c.id !== "all").map((cat) => (
-                <button key={cat.id} onClick={() => setForm((f) => ({ ...f, category: cat.id }))} style={{ background: form.category === cat.id ? `${G.found}22` : "rgba(255,255,255,0.04)", border: `1px solid ${form.category === cat.id ? G.found : G.border}`, borderRadius: "7px", color: form.category === cat.id ? G.text : G.muted, padding: "5px 10px", fontSize: "11px", cursor: "pointer" }}>
+                <button
+                  key={cat.id}
+                  onClick={() => setForm((f) => ({ ...f, category: cat.id }))}
+                  style={{
+                    background: form.category === cat.id ? `${G.found}22` : "rgba(255,255,255,0.04)",
+                    border: `1px solid ${form.category === cat.id ? G.found : G.border}`,
+                    borderRadius: "7px",
+                    color: form.category === cat.id ? G.text : G.muted,
+                    padding: "5px 10px",
+                    fontSize: "11px",
+                    cursor: "pointer",
+                  }}
+                >
                   {cat.icon} {LT.categories[cat.id]}
                 </button>
               ))}
             </div>
 
             <div style={{ fontSize: "11px", color: G.muted, marginBottom: "8px" }}>{LT.photosLabel}</div>
-            <PhotoGallery photos={photos} onAdd={(p) => setPhotos((prev) => [...prev, p].slice(0, 4))} onRemove={(i) => setPhotos((prev) => prev.filter((_, idx) => idx !== i))} />
+            <PhotoGallery
+              photos={photos}
+              onAdd={(p) => setPhotos((prev) => [...prev, p].slice(0, 4))}
+              onRemove={(i) => setPhotos((prev) => prev.filter((_, idx) => idx !== i))}
+            />
 
-            <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: G.muted, cursor: "pointer", margin: "12px 0 16px" }}>
-              <input type="checkbox" checked={form.blurPhoto} onChange={(e) => setForm((f) => ({ ...f, blurPhoto: e.target.checked }))} />
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                fontSize: "12px",
+                color: G.muted,
+                cursor: "pointer",
+                margin: "12px 0 16px",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={form.blurPhoto}
+                onChange={(e) => setForm((f) => ({ ...f, blurPhoto: e.target.checked }))}
+              />
               {LT.markHidden}
             </label>
 
             <div style={{ display: "flex", gap: "7px" }}>
-              <button onClick={() => setStep(1)} style={{ flex: 1, background: "rgba(255,255,255,0.05)", border: "none", color: G.muted, padding: "12px", borderRadius: "10px", cursor: "pointer", fontSize: "13px" }}>
+              <button
+                onClick={() => setStep(1)}
+                style={{
+                  flex: 1,
+                  background: "rgba(255,255,255,0.05)",
+                  border: "none",
+                  color: G.muted,
+                  padding: "12px",
+                  borderRadius: "10px",
+                  cursor: "pointer",
+                  fontSize: "13px",
+                }}
+              >
                 {LT.back}
               </button>
-              <button onClick={() => form.title && setStep(3)} style={{ flex: 2, background: form.title ? accent : "rgba(255,255,255,0.06)", border: "none", color: form.title ? G.text : G.muted, padding: "12px", borderRadius: "10px", fontWeight: "700", fontSize: "13px", cursor: form.title ? "pointer" : "default" }}>
+              <button
+                onClick={() => form.title && setStep(3)}
+                style={{
+                  flex: 2,
+                  background: form.title ? accent : "rgba(255,255,255,0.06)",
+                  border: "none",
+                  color: form.title ? G.text : G.muted,
+                  padding: "12px",
+                  borderRadius: "10px",
+                  fontWeight: "700",
+                  fontSize: "13px",
+                  cursor: form.title ? "pointer" : "default",
+                }}
+              >
                 {LT.next}
               </button>
             </div>
@@ -974,26 +1603,69 @@ function AddModal({ onClose, onAdd, defaultType }) {
               <GeoStep onDone={(data) => setGeoData(data)} photoFile={rawFile} />
             ) : (
               <div>
-                <div style={{ background: "rgba(46,204,113,0.1)", border: "1px solid rgba(46,204,113,0.3)", borderRadius: "12px", padding: "14px", marginBottom: "14px", display: "flex", gap: "11px", alignItems: "center" }}>
+                <div
+                  style={{
+                    background: "rgba(46,204,113,0.1)",
+                    border: "1px solid rgba(46,204,113,0.3)",
+                    borderRadius: "12px",
+                    padding: "14px",
+                    marginBottom: "14px",
+                    display: "flex",
+                    gap: "11px",
+                    alignItems: "center",
+                  }}
+                >
                   <span style={{ fontSize: "20px" }}>📍</span>
                   <div>
                     <div style={{ fontSize: "12px", fontWeight: "700", color: G.success, marginBottom: "3px" }}>{LT.geoSaved}</div>
-                    <div style={{ fontSize: "11px", color: G.muted }}>{geoData.address || `${geoData.pin?.lat?.toFixed(4)}, ${geoData.pin?.lng?.toFixed(4)}`}</div>
-                    {geoData.buffer ? <div style={{ fontSize: "10px", color: G.warn, marginTop: "2px" }}>◎ buferis {geoData.buffer} m</div> : null}
+                    <div style={{ fontSize: "11px", color: G.muted }}>
+                      {geoData.address || `${geoData.pin?.lat?.toFixed(4)}, ${geoData.pin?.lng?.toFixed(4)}`}
+                    </div>
+                    {geoData.buffer ? (
+                      <div style={{ fontSize: "10px", color: G.warn, marginTop: "2px" }}>◎ buferis {geoData.buffer} m</div>
+                    ) : null}
                   </div>
                 </div>
                 {geoData.pin && <LeafletMap pin={geoData.pin} buffer={geoData.buffer} interactive={false} height={160} />}
                 <div style={{ display: "flex", gap: "7px", marginTop: "12px" }}>
-                  <button onClick={() => setGeoData(null)} style={{ flex: 1, background: "rgba(255,255,255,0.05)", border: "none", color: G.muted, padding: "12px", borderRadius: "10px", cursor: "pointer", fontSize: "12px" }}>
+                  <button
+                    onClick={() => setGeoData(null)}
+                    style={{
+                      flex: 1,
+                      background: "rgba(255,255,255,0.05)",
+                      border: "none",
+                      color: G.muted,
+                      padding: "12px",
+                      borderRadius: "10px",
+                      cursor: "pointer",
+                      fontSize: "12px",
+                    }}
+                  >
                     {LT.geoChange}
                   </button>
-                  <button onClick={() => setStep(4)} style={{ flex: 2, background: accent, border: "none", color: G.text, padding: "12px", borderRadius: "10px", fontWeight: "700", fontSize: "13px", cursor: "pointer" }}>
+                  <button
+                    onClick={() => setStep(4)}
+                    style={{
+                      flex: 2,
+                      background: accent,
+                      border: "none",
+                      color: G.text,
+                      padding: "12px",
+                      borderRadius: "10px",
+                      fontWeight: "700",
+                      fontSize: "13px",
+                      cursor: "pointer",
+                    }}
+                  >
                     {LT.next}
                   </button>
                 </div>
               </div>
             )}
-            <button onClick={() => setStep(2)} style={{ width: "100%", marginTop: "10px", background: "none", border: "none", color: G.muted, fontSize: "12px", cursor: "pointer" }}>
+            <button
+              onClick={() => setStep(2)}
+              style={{ width: "100%", marginTop: "10px", background: "none", border: "none", color: G.muted, fontSize: "12px", cursor: "pointer" }}
+            >
               {LT.back}
             </button>
           </>
@@ -1004,7 +1676,19 @@ function AddModal({ onClose, onAdd, defaultType }) {
             <div style={{ fontSize: "11px", color: G.muted, marginBottom: "8px" }}>{LT.country}</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "5px", marginBottom: "16px" }}>
               {Object.entries(LT.locations).map(([id, loc]) => (
-                <button key={id} onClick={() => setForm((f) => ({ ...f, country: id }))} style={{ background: form.country === id ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.04)", border: `1px solid ${form.country === id ? "rgba(255,255,255,0.35)" : G.border}`, borderRadius: "7px", color: form.country === id ? G.text : G.muted, padding: "5px 10px", fontSize: "11px", cursor: "pointer" }}>
+                <button
+                  key={id}
+                  onClick={() => setForm((f) => ({ ...f, country: id }))}
+                  style={{
+                    background: form.country === id ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.04)",
+                    border: `1px solid ${form.country === id ? "rgba(255,255,255,0.35)" : G.border}`,
+                    borderRadius: "7px",
+                    color: form.country === id ? G.text : G.muted,
+                    padding: "5px 10px",
+                    fontSize: "11px",
+                    cursor: "pointer",
+                  }}
+                >
                   {loc.flag} {loc.label}
                 </button>
               ))}
@@ -1015,26 +1699,126 @@ function AddModal({ onClose, onAdd, defaultType }) {
                 <div style={{ fontSize: "11px", color: G.muted, marginBottom: "8px" }}>{LT.secretQuestion}</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "10px" }}>
                   {availableQuestions.map((q, i) => (
-                    <div key={i} onClick={() => setSelectedQuestion(q === selectedQuestion ? "" : q)} style={{ background: selectedQuestion === q ? "rgba(99,102,241,0.18)" : "rgba(255,255,255,0.03)", border: `1px solid ${selectedQuestion === q ? G.found : G.border}`, borderRadius: "9px", padding: "10px 13px", cursor: "pointer", display: "flex", gap: "10px", alignItems: "flex-start", transition: "all 0.15s" }}>
-                      <div style={{ width: "16px", height: "16px", borderRadius: "50%", border: `2px solid ${selectedQuestion === q ? G.found : "rgba(255,255,255,0.25)"}`, background: selectedQuestion === q ? G.found : "transparent", flexShrink: 0, marginTop: "1px" }} />
+                    <div
+                      key={i}
+                      onClick={() => setSelectedQuestion(q === selectedQuestion ? "" : q)}
+                      style={{
+                        background: selectedQuestion === q ? "rgba(99,102,241,0.18)" : "rgba(255,255,255,0.03)",
+                        border: `1px solid ${selectedQuestion === q ? G.found : G.border}`,
+                        borderRadius: "9px",
+                        padding: "10px 13px",
+                        cursor: "pointer",
+                        display: "flex",
+                        gap: "10px",
+                        alignItems: "flex-start",
+                        transition: "all 0.15s",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: "16px",
+                          height: "16px",
+                          borderRadius: "50%",
+                          border: `2px solid ${selectedQuestion === q ? G.found : "rgba(255,255,255,0.25)"}`,
+                          background: selectedQuestion === q ? G.found : "transparent",
+                          flexShrink: 0,
+                          marginTop: "1px",
+                        }}
+                      />
                       <span style={{ fontSize: "12px", color: selectedQuestion === q ? G.text : G.muted, lineHeight: 1.5 }}>{q}</span>
                     </div>
                   ))}
                 </div>
-                <input value={form.customQuestion} onChange={(e) => { setForm((f) => ({ ...f, customQuestion: e.target.value })); setSelectedQuestion(""); }} placeholder={LT.ownQuestion} style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: `1px solid ${G.border}`, borderRadius: "9px", padding: "10px 13px", color: G.text, fontSize: "13px", outline: "none", marginBottom: "16px", boxSizing: "border-box" }} />
+                <input
+                  value={form.customQuestion}
+                  onChange={(e) => {
+                    setForm((f) => ({ ...f, customQuestion: e.target.value }));
+                    setSelectedQuestion("");
+                  }}
+                  placeholder={LT.ownQuestion}
+                  style={{
+                    width: "100%",
+                    background: "rgba(255,255,255,0.05)",
+                    border: `1px solid ${G.border}`,
+                    borderRadius: "9px",
+                    padding: "10px 13px",
+                    color: G.text,
+                    fontSize: "13px",
+                    outline: "none",
+                    marginBottom: "16px",
+                    boxSizing: "border-box",
+                  }}
+                />
               </>
             )}
 
             <div style={{ fontSize: "11px", color: G.muted, marginBottom: "8px" }}>{LT.contacts}</div>
-            <input value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} placeholder="📞 Telefonas" style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: `1px solid ${G.border}`, borderRadius: "9px", padding: "10px 13px", color: G.text, fontSize: "13px", outline: "none", marginBottom: "9px", boxSizing: "border-box" }} />
-            <input value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} placeholder="✉️ El. paštas" style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: `1px solid ${G.border}`, borderRadius: "9px", padding: "10px 13px", color: G.text, fontSize: "13px", outline: "none", marginBottom: "4px", boxSizing: "border-box" }} />
+            <input
+              value={form.phone}
+              onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+              placeholder="📞 Telefonas"
+              style={{
+                width: "100%",
+                background: "rgba(255,255,255,0.05)",
+                border: `1px solid ${G.border}`,
+                borderRadius: "9px",
+                padding: "10px 13px",
+                color: G.text,
+                fontSize: "13px",
+                outline: "none",
+                marginBottom: "9px",
+                boxSizing: "border-box",
+              }}
+            />
+            <input
+              value={form.email}
+              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+              placeholder="✉️ El. paštas"
+              style={{
+                width: "100%",
+                background: "rgba(255,255,255,0.05)",
+                border: `1px solid ${G.border}`,
+                borderRadius: "9px",
+                padding: "10px 13px",
+                color: G.text,
+                fontSize: "13px",
+                outline: "none",
+                marginBottom: "4px",
+                boxSizing: "border-box",
+              }}
+            />
             <div style={{ fontSize: "10px", color: G.dim, marginBottom: "18px", lineHeight: 1.5 }}>{LT.contactsHint}</div>
 
             <div style={{ display: "flex", gap: "7px" }}>
-              <button onClick={() => setStep(3)} style={{ flex: 1, background: "rgba(255,255,255,0.05)", border: "none", color: G.muted, padding: "12px", borderRadius: "10px", cursor: "pointer", fontSize: "13px" }}>
+              <button
+                onClick={() => setStep(3)}
+                style={{
+                  flex: 1,
+                  background: "rgba(255,255,255,0.05)",
+                  border: "none",
+                  color: G.muted,
+                  padding: "12px",
+                  borderRadius: "10px",
+                  cursor: "pointer",
+                  fontSize: "13px",
+                }}
+              >
                 {LT.back}
               </button>
-              <button onClick={handleSubmit} style={{ flex: 2, background: `linear-gradient(135deg, ${accent}, ${type === "found" ? "#8b5cf6" : "#c0392b"})`, border: "none", color: G.text, padding: "13px", borderRadius: "10px", fontWeight: "800", fontSize: "14px", cursor: "pointer" }}>
+              <button
+                onClick={handleSubmit}
+                style={{
+                  flex: 2,
+                  background: `linear-gradient(135deg, ${accent}, ${type === "found" ? "#8b5cf6" : "#c0392b"})`,
+                  border: "none",
+                  color: G.text,
+                  padding: "13px",
+                  borderRadius: "10px",
+                  fontWeight: "800",
+                  fontSize: "14px",
+                  cursor: "pointer",
+                }}
+              >
                 {LT.publish}
               </button>
             </div>
@@ -1057,11 +1841,33 @@ function ItemCard({ item, onClick }) {
       onClick={() => onClick(item)}
       onMouseEnter={() => setHov(true)}
       onMouseLeave={() => setHov(false)}
-      style={{ background: item.color || colors.bg, borderRadius: "16px", overflow: "hidden", cursor: "pointer", position: "relative", border: hov ? `1px solid ${item.accent || colors.accent}` : `1px solid ${G.border}`, transition: "all 0.22s", transform: hov ? "translateY(-3px)" : "none", boxShadow: hov ? "0 14px 40px rgba(0,0,0,0.5)" : "0 4px 16px rgba(0,0,0,0.3)" }}
+      style={{
+        background: item.color || colors.bg,
+        borderRadius: "16px",
+        overflow: "hidden",
+        cursor: "pointer",
+        position: "relative",
+        border: hov ? `1px solid ${item.accent || colors.accent}` : `1px solid ${G.border}`,
+        transition: "all 0.22s",
+        transform: hov ? "translateY(-3px)" : "none",
+        boxShadow: hov ? "0 14px 40px rgba(0,0,0,0.5)" : "0 4px 16px rgba(0,0,0,0.3)",
+      }}
     >
       {firstPhoto && <img src={firstPhoto} alt="" style={{ width: "100%", height: "140px", objectFit: "cover", display: "block" }} />}
       <div style={{ padding: "16px" }}>
-        <div style={{ position: "absolute", top: firstPhoto ? "110px" : "12px", right: "12px", background: G.lost, borderRadius: "50%", width: "8px", height: "8px", boxShadow: "0 0 0 3px rgba(231,76,60,0.3)", display: item.urgent ? "block" : "none" }} />
+        <div
+          style={{
+            position: "absolute",
+            top: firstPhoto ? "110px" : "12px",
+            right: "12px",
+            background: G.lost,
+            borderRadius: "50%",
+            width: "8px",
+            height: "8px",
+            boxShadow: "0 0 0 3px rgba(231,76,60,0.3)",
+            display: item.urgent ? "block" : "none",
+          }}
+        />
         <div style={{ display: "flex", gap: "5px", marginBottom: "9px", flexWrap: "wrap" }}>
           <Pill color={isLost ? G.lost : G.found} small>
             {isLost ? `⚠ ${LT.lost}` : `◉ ${LT.found}`}
@@ -1091,13 +1897,13 @@ function ItemCard({ item, onClick }) {
   );
 }
 
-// ─── DETALIŲ MODALAS ──────────────────────────────────────────────────────────
+// ─── DETALIŲ MODALAS (su lightbox galerija) ───────────────────────────────────
 function DetailModal({ item, onClose }) {
   const [tab, setTab] = useState("info");
   const [chatMsg, setChatMsg] = useState("");
   const [msgs, setMsgs] = useState([{ from: "system", text: "Pokalbis anonimiškas iki verifikacijos." }]);
   const [photoIdx, setPhotoIdx] = useState(0);
-  const [showFullImage, setShowFullImage] = useState(false);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   const colors = CATEGORY_COLORS[item.category] || CATEGORY_COLORS.other;
   const isLost = item.type === "lost";
@@ -1106,16 +1912,21 @@ function DetailModal({ item, onClose }) {
   const photos = item.photos || [];
 
   const nextPhoto = useCallback(() => {
-    if (photos.length > 1) {
-      setPhotoIdx((i) => (i + 1) % photos.length);
-    } else {
-      setShowFullImage(true);
-    }
+    setPhotoIdx((i) => (i + 1) % photos.length);
   }, [photos.length]);
 
   const prevPhoto = useCallback(() => {
     setPhotoIdx((i) => (i - 1 + photos.length) % photos.length);
   }, [photos.length]);
+
+  // ESC klavišo uždarymas
+  useEffect(() => {
+    const handleEsc = (e) => {
+      if (lightboxOpen && e.key === "Escape") setLightboxOpen(false);
+    };
+    document.addEventListener("keydown", handleEsc);
+    return () => document.removeEventListener("keydown", handleEsc);
+  }, [lightboxOpen]);
 
   const send = () => {
     if (!chatMsg.trim()) return;
@@ -1125,39 +1936,259 @@ function DetailModal({ item, onClose }) {
   };
 
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.82)", backdropFilter: "blur(10px)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: bg, border: `1px solid ${accent}44`, borderRadius: "24px", width: "100%", maxWidth: "500px", display: "flex", flexDirection: "column", maxHeight: "93vh", overflow: "hidden", boxShadow: "0 40px 80px rgba(0,0,0,0.6)" }}>
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.82)",
+        backdropFilter: "blur(10px)",
+        zIndex: 200,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "16px",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: bg,
+          border: `1px solid ${accent}44`,
+          borderRadius: "24px",
+          width: "100%",
+          maxWidth: "500px",
+          display: "flex",
+          flexDirection: "column",
+          maxHeight: "93vh",
+          overflow: "hidden",
+          boxShadow: "0 40px 80px rgba(0,0,0,0.6)",
+        }}
+      >
+        {/* ─── GALERIJA MODALO VIDUJE ─── */}
         {photos.length > 0 && (
           <div style={{ position: "relative" }}>
-            <img src={photos[photoIdx]} alt="" onClick={nextPhoto} style={{ width: "100%", height: "200px", objectFit: "cover", display: "block", cursor: photos.length > 1 ? "pointer" : "zoom-in" }} />
+            <img
+              src={photos[photoIdx]}
+              alt=""
+              onClick={() => setLightboxOpen(true)}
+              style={{
+                width: "100%",
+                height: "200px",
+                objectFit: "cover",
+                display: "block",
+                cursor: "zoom-in",
+              }}
+            />
+
+            {/* Navigacijos taškai */}
             {photos.length > 1 && (
-              <>
-                <button onClick={(e) => { e.stopPropagation(); prevPhoto(); }} style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", background: "rgba(0,0,0,0.5)", border: "none", color: "#fff", width: "36px", height: "36px", borderRadius: "50%", cursor: "pointer", fontSize: "18px", display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
-                <button onClick={(e) => { e.stopPropagation(); nextPhoto(); }} style={{ position: "absolute", right: "10px", top: "50%", transform: "translateY(-50%)", background: "rgba(0,0,0,0.5)", border: "none", color: "#fff", width: "36px", height: "36px", borderRadius: "50%", cursor: "pointer", fontSize: "18px", display: "flex", alignItems: "center", justifyContent: "center" }}>›</button>
-              </>
-            )}
-            {photos.length > 1 && (
-              <div style={{ position: "absolute", bottom: "10px", left: "50%", transform: "translateX(-50%)", display: "flex", gap: "6px", background: "rgba(0,0,0,0.4)", padding: "6px 10px", borderRadius: "20px" }}>
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: "10px",
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  display: "flex",
+                  gap: "6px",
+                  background: "rgba(0,0,0,0.5)",
+                  padding: "6px 10px",
+                  borderRadius: "20px",
+                }}
+              >
                 {photos.map((_, i) => (
-                  <button key={i} onClick={(e) => { e.stopPropagation(); setPhotoIdx(i); }} style={{ width: i === photoIdx ? "20px" : "8px", height: "8px", borderRadius: "4px", background: i === photoIdx ? "#fff" : "rgba(255,255,255,0.5)", border: "none", cursor: "pointer", transition: "all 0.2s", padding: 0 }} />
+                  <button
+                    key={i}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPhotoIdx(i);
+                    }}
+                    style={{
+                      width: i === photoIdx ? "20px" : "8px",
+                      height: "8px",
+                      borderRadius: "4px",
+                      background: i === photoIdx ? "#fff" : "rgba(255,255,255,0.5)",
+                      border: "none",
+                      cursor: "pointer",
+                      transition: "all 0.2s",
+                      padding: 0,
+                    }}
+                  />
                 ))}
               </div>
             )}
+
+            {/* Skaitliukas */}
             {photos.length > 1 && (
-              <div style={{ position: "absolute", top: "10px", right: "10px", background: "rgba(0,0,0,0.6)", borderRadius: "6px", padding: "4px 8px", fontSize: "11px", color: "#fff", fontWeight: "600" }}>
+              <div
+                style={{
+                  position: "absolute",
+                  top: "10px",
+                  right: "10px",
+                  background: "rgba(0,0,0,0.6)",
+                  borderRadius: "6px",
+                  padding: "4px 8px",
+                  fontSize: "11px",
+                  color: "#fff",
+                  fontWeight: "600",
+                }}
+              >
+                {photoIdx + 1} / {photos.length}
+              </div>
+            )}
+
+            {/* Zoom ikona */}
+            <div
+              style={{
+                position: "absolute",
+                top: "50%",
+                left: "50%",
+                transform: "translate(-50%, -50%)",
+                background: "rgba(0,0,0,0.4)",
+                borderRadius: "50%",
+                width: "48px",
+                height: "48px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "20px",
+                color: "#fff",
+                opacity: 0.7,
+                pointerEvents: "none",
+              }}
+            >
+              🔍
+            </div>
+          </div>
+        )}
+
+        {/* ─── LIGHTBOX (PILNO EKRANO PERŽIŪRA) ─── */}
+        {lightboxOpen && (
+          <div
+            onClick={() => setLightboxOpen(false)}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.95)",
+              zIndex: 300,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              animation: "fadeIn 0.2s ease",
+            }}
+          >
+            <img
+              src={photos[photoIdx]}
+              alt=""
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                maxWidth: "95%",
+                maxHeight: "95%",
+                objectFit: "contain",
+                boxShadow: "0 0 40px rgba(0,0,0,0.8)",
+              }}
+            />
+
+            <button
+              onClick={() => setLightboxOpen(false)}
+              style={{
+                position: "absolute",
+                top: "20px",
+                right: "20px",
+                background: "rgba(255,255,255,0.15)",
+                border: "none",
+                color: "#fff",
+                width: "44px",
+                height: "44px",
+                borderRadius: "50%",
+                cursor: "pointer",
+                fontSize: "22px",
+                backdropFilter: "blur(8px)",
+              }}
+            >
+              ✕
+            </button>
+
+            {photos.length > 1 && (
+              <>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    prevPhoto();
+                  }}
+                  style={{
+                    position: "absolute",
+                    left: "20px",
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    background: "rgba(255,255,255,0.15)",
+                    border: "none",
+                    color: "#fff",
+                    width: "48px",
+                    height: "48px",
+                    borderRadius: "50%",
+                    cursor: "pointer",
+                    fontSize: "24px",
+                    backdropFilter: "blur(8px)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  ‹
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    nextPhoto();
+                  }}
+                  style={{
+                    position: "absolute",
+                    right: "20px",
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    background: "rgba(255,255,255,0.15)",
+                    border: "none",
+                    color: "#fff",
+                    width: "48px",
+                    height: "48px",
+                    borderRadius: "50%",
+                    cursor: "pointer",
+                    fontSize: "24px",
+                    backdropFilter: "blur(8px)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  ›
+                </button>
+              </>
+            )}
+
+            {photos.length > 1 && (
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: "20px",
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  background: "rgba(0,0,0,0.6)",
+                  borderRadius: "8px",
+                  padding: "6px 14px",
+                  fontSize: "13px",
+                  color: "#fff",
+                  fontWeight: "600",
+                  backdropFilter: "blur(8px)",
+                }}
+              >
                 {photoIdx + 1} / {photos.length}
               </div>
             )}
           </div>
         )}
 
-        {showFullImage && (
-          <div onClick={() => setShowFullImage(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.95)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <img src={photos[photoIdx]} alt="" style={{ maxWidth: "95%", maxHeight: "95%", objectFit: "contain" }} />
-            <button onClick={() => setShowFullImage(false)} style={{ position: "absolute", top: "20px", right: "20px", background: "rgba(255,255,255,0.1)", border: "none", color: "#fff", width: "40px", height: "40px", borderRadius: "50%", cursor: "pointer", fontSize: "20px" }}>✕</button>
-          </div>
-        )}
-
+        {/* ─── MODALO TURINYS ─── */}
         <div style={{ padding: "20px 22px 0" }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
             <div style={{ display: "flex", gap: "5px", flexWrap: "wrap" }}>
@@ -1169,7 +2200,20 @@ function DetailModal({ item, onClose }) {
               </Pill>
               {item.blurred && <BlurBadge />}
             </div>
-            <button onClick={onClose} style={{ background: "rgba(255,255,255,0.1)", border: "none", color: G.text, width: "30px", height: "30px", borderRadius: "50%", cursor: "pointer" }}>✕</button>
+            <button
+              onClick={onClose}
+              style={{
+                background: "rgba(255,255,255,0.1)",
+                border: "none",
+                color: G.text,
+                width: "30px",
+                height: "30px",
+                borderRadius: "50%",
+                cursor: "pointer",
+              }}
+            >
+              ✕
+            </button>
           </div>
 
           <div style={{ fontSize: "21px", fontWeight: "800", color: G.text, marginBottom: "4px", fontFamily: G.serif }}>{item.title}</div>
@@ -1183,7 +2227,21 @@ function DetailModal({ item, onClose }) {
               ["verify", LT.verification],
               ["contact", LT.contact],
             ].map(([id, label]) => (
-              <button key={id} onClick={() => setTab(id)} style={{ flex: 1, padding: "7px 4px", border: "none", borderRadius: "8px", background: tab === id ? accent : "transparent", color: tab === id ? "#fff" : G.muted, fontSize: "11px", fontWeight: "700", cursor: "pointer" }}>
+              <button
+                key={id}
+                onClick={() => setTab(id)}
+                style={{
+                  flex: 1,
+                  padding: "7px 4px",
+                  border: "none",
+                  borderRadius: "8px",
+                  background: tab === id ? accent : "transparent",
+                  color: tab === id ? "#fff" : G.muted,
+                  fontSize: "11px",
+                  fontWeight: "700",
+                  cursor: "pointer",
+                }}
+              >
                 {label}
               </button>
             ))}
@@ -1195,13 +2253,19 @@ function DetailModal({ item, onClose }) {
             <>
               <div style={{ fontSize: "14px", color: "rgba(255,255,255,0.7)", lineHeight: 1.7, marginBottom: "13px" }}>{item.description}</div>
               <div style={{ background: "rgba(0,0,0,0.25)", borderRadius: "10px", padding: "12px" }}>
-                <div style={{ fontSize: "10px", color: G.muted, marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.08em" }}>{LT.placeAndTime}</div>
+                <div style={{ fontSize: "10px", color: G.muted, marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                  {LT.placeAndTime}
+                </div>
                 <div style={{ fontSize: "13px", color: G.text }}>{item.location}</div>
                 <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.38)", marginTop: "3px" }}>
                   {item.city} · {item.date}
                 </div>
               </div>
-              {item.geoPin && <div style={{ marginTop: "12px" }}><LeafletMap pin={item.geoPin} buffer={item.geoBuffer} interactive={false} height={160} /></div>}
+              {item.geoPin && (
+                <div style={{ marginTop: "12px" }}>
+                  <LeafletMap pin={item.geoPin} buffer={item.geoBuffer} interactive={false} height={160} />
+                </div>
+              )}
             </>
           )}
 
@@ -1210,12 +2274,45 @@ function DetailModal({ item, onClose }) {
               <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.55)", marginBottom: "13px", lineHeight: 1.6 }}>{LT.verifyText}</div>
               {item.secretQuestion && (
                 <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: "10px", padding: "13px", marginBottom: "11px" }}>
-                  <div style={{ fontSize: "10px", color: G.muted, marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.08em" }}>{LT.secretQuestionLabel}</div>
+                  <div style={{ fontSize: "10px", color: G.muted, marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                    {LT.secretQuestionLabel}
+                  </div>
                   <div style={{ fontSize: "14px", color: G.text, fontWeight: "600" }}>{item.secretQuestion}</div>
                 </div>
               )}
-              <textarea placeholder={LT.yourAnswer} style={{ width: "100%", background: "rgba(255,255,255,0.06)", border: `1px solid ${G.border}`, borderRadius: "10px", padding: "11px", color: G.text, fontSize: "13px", resize: "none", height: "80px", outline: "none", boxSizing: "border-box", fontFamily: G.sans }} />
-              <button style={{ marginTop: "10px", width: "100%", background: accent, border: "none", color: G.text, padding: "12px", borderRadius: "10px", fontSize: "13px", fontWeight: "700", cursor: "pointer" }}>{LT.sendAnswer}</button>
+              <textarea
+                placeholder={LT.yourAnswer}
+                style={{
+                  width: "100%",
+                  background: "rgba(255,255,255,0.06)",
+                  border: `1px solid ${G.border}`,
+                  borderRadius: "10px",
+                  padding: "11px",
+                  color: G.text,
+                  fontSize: "13px",
+                  resize: "none",
+                  height: "80px",
+                  outline: "none",
+                  boxSizing: "border-box",
+                  fontFamily: G.sans,
+                }}
+              />
+              <button
+                style={{
+                  marginTop: "10px",
+                  width: "100%",
+                  background: accent,
+                  border: "none",
+                  color: G.text,
+                  padding: "12px",
+                  borderRadius: "10px",
+                  fontSize: "13px",
+                  fontWeight: "700",
+                  cursor: "pointer",
+                }}
+              >
+                {LT.sendAnswer}
+              </button>
             </>
           )}
 
@@ -1227,27 +2324,99 @@ function DetailModal({ item, onClose }) {
                   [`📞 ${LT.phone}`, LT.afterVerify, G.success],
                   [`✉️ ${LT.email}`, LT.afterVerify, "#2980b9"],
                 ].map(([label, sub, color], i) => (
-                  <div key={i} style={{ background: "rgba(0,0,0,0.22)", borderRadius: "10px", padding: "11px", display: "flex", alignItems: "center", gap: "10px" }}>
+                  <div
+                    key={i}
+                    style={{
+                      background: "rgba(0,0,0,0.22)",
+                      borderRadius: "10px",
+                      padding: "11px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                    }}
+                  >
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: "13px", fontWeight: "600", color: G.text }}>{label}</div>
                       <div style={{ fontSize: "11px", color: G.muted }}>{sub}</div>
                     </div>
-                    <button style={{ background: color, border: "none", color: G.text, padding: "6px 12px", borderRadius: "7px", fontSize: "11px", fontWeight: "700", cursor: "pointer" }}>{LT.write}</button>
+                    <button
+                      style={{
+                        background: color,
+                        border: "none",
+                        color: G.text,
+                        padding: "6px 12px",
+                        borderRadius: "7px",
+                        fontSize: "11px",
+                        fontWeight: "700",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {LT.write}
+                    </button>
                   </div>
                 ))}
               </div>
 
-              <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: "10px", padding: "10px", minHeight: "88px", marginBottom: "10px", display: "flex", flexDirection: "column", gap: "7px" }}>
+              <div
+                style={{
+                  background: "rgba(0,0,0,0.3)",
+                  borderRadius: "10px",
+                  padding: "10px",
+                  minHeight: "88px",
+                  marginBottom: "10px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "7px",
+                }}
+              >
                 {msgs.map((m, i) => (
-                  <div key={i} style={{ alignSelf: m.from === "me" ? "flex-end" : m.from === "system" ? "center" : "flex-start", background: m.from === "me" ? accent : m.from === "system" ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.1)", padding: "7px 11px", borderRadius: "9px", fontSize: "12px", color: m.from === "system" ? G.muted : G.text, maxWidth: "82%" }}>
+                  <div
+                    key={i}
+                    style={{
+                      alignSelf: m.from === "me" ? "flex-end" : m.from === "system" ? "center" : "flex-start",
+                      background: m.from === "me" ? accent : m.from === "system" ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.1)",
+                      padding: "7px 11px",
+                      borderRadius: "9px",
+                      fontSize: "12px",
+                      color: m.from === "system" ? G.muted : G.text,
+                      maxWidth: "82%",
+                    }}
+                  >
                     {m.text}
                   </div>
                 ))}
               </div>
 
               <div style={{ display: "flex", gap: "7px" }}>
-                <input value={chatMsg} onChange={(e) => setChatMsg(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} placeholder={LT.chatPlaceholder} style={{ flex: 1, background: "rgba(255,255,255,0.06)", border: `1px solid ${G.border}`, borderRadius: "9px", padding: "9px 12px", color: G.text, fontSize: "13px", outline: "none" }} />
-                <button onClick={send} style={{ background: accent, border: "none", color: G.text, padding: "9px 14px", borderRadius: "9px", cursor: "pointer" }}>→</button>
+                <input
+                  value={chatMsg}
+                  onChange={(e) => setChatMsg(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && send()}
+                  placeholder={LT.chatPlaceholder}
+                  style={{
+                    flex: 1,
+                    background: "rgba(255,255,255,0.06)",
+                    border: `1px solid ${G.border}`,
+                    borderRadius: "9px",
+                    padding: "9px 12px",
+                    color: G.text,
+                    fontSize: "13px",
+                    outline: "none",
+                  }}
+                />
+                <button
+                  onClick={send}
+                  style={{
+                    background: accent,
+                    border: "none",
+                    color: G.text,
+                    padding: "9px 14px",
+                    borderRadius: "9px",
+                    cursor: "pointer",
+                  }}
+                >
+                  →
+                </button>
               </div>
             </>
           )}
@@ -1271,17 +2440,55 @@ function ApiKeyBanner({ onDismiss }) {
   };
 
   return (
-    <div style={{ margin: "12px 16px", background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.3)", borderRadius: "14px", padding: "16px" }}>
+    <div
+      style={{
+        margin: "12px 16px",
+        background: "rgba(99,102,241,0.08)",
+        border: "1px solid rgba(99,102,241,0.3)",
+        borderRadius: "14px",
+        padding: "16px",
+      }}
+    >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
         <div>
           <div style={{ fontSize: "13px", fontWeight: "700", color: G.text, marginBottom: "3px" }}>{LT.apiKeyTitle}</div>
           <div style={{ fontSize: "11px", color: G.muted, lineHeight: 1.5 }}>{LT.apiKeySub}</div>
         </div>
-        <button onClick={onDismiss} style={{ background: "none", border: "none", color: G.muted, cursor: "pointer", fontSize: "16px" }}>✕</button>
+        <button onClick={onDismiss} style={{ background: "none", border: "none", color: G.muted, cursor: "pointer", fontSize: "16px" }}>
+          ✕
+        </button>
       </div>
       <div style={{ display: "flex", gap: "7px" }}>
-        <input value={key} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => e.key === "Enter" && save()} placeholder="AIza..." style={{ flex: 1, background: "rgba(255,255,255,0.06)", border: `1px solid ${G.border}`, borderRadius: "8px", padding: "9px 12px", color: G.text, fontSize: "12px", outline: "none", fontFamily: "monospace" }} />
-        <button onClick={save} style={{ background: saved ? G.success : G.found, border: "none", color: G.text, padding: "9px 14px", borderRadius: "8px", fontWeight: "700", fontSize: "12px", cursor: "pointer" }}>
+        <input
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && save()}
+          placeholder="AIza..."
+          style={{
+            flex: 1,
+            background: "rgba(255,255,255,0.06)",
+            border: `1px solid ${G.border}`,
+            borderRadius: "8px",
+            padding: "9px 12px",
+            color: G.text,
+            fontSize: "12px",
+            outline: "none",
+            fontFamily: "monospace",
+          }}
+        />
+        <button
+          onClick={save}
+          style={{
+            background: saved ? G.success : G.found,
+            border: "none",
+            color: G.text,
+            padding: "9px 14px",
+            borderRadius: "8px",
+            fontWeight: "700",
+            fontSize: "12px",
+            cursor: "pointer",
+          }}
+        >
           {saved ? "✓" : "OK"}
         </button>
       </div>
@@ -1325,21 +2532,67 @@ export default function App() {
         @keyframes pop       { from { transform: scale(.85); opacity: 0; } to { transform: scale(1); opacity: 1; } }
         @keyframes fadeUp    { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeIn    { from { opacity: 0; } to { opacity: 1; } }
         input::placeholder, textarea::placeholder { color: rgba(255,255,255,0.28); }
         .leaflet-container { font-family: ${G.sans}; }
       `}</style>
 
       {showApiBanner && <ApiKeyBanner onDismiss={() => setShowApiBanner(false)} />}
 
-      <div style={{ padding: "16px 20px 14px", borderBottom: "1px solid rgba(255,255,255,0.05)", position: "sticky", top: 0, background: "rgba(6,10,15,0.97)", backdropFilter: "blur(16px)", zIndex: 100 }}>
+      <div
+        style={{
+          padding: "16px 20px 14px",
+          borderBottom: "1px solid rgba(255,255,255,0.05)",
+          position: "sticky",
+          top: 0,
+          background: "rgba(6,10,15,0.97)",
+          backdropFilter: "blur(16px)",
+          zIndex: 100,
+        }}
+      >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
           <div>
             <div style={{ fontSize: "9px", letterSpacing: "0.16em", color: G.dim, textTransform: "uppercase" }}>{LT.appSub}</div>
-            <div style={{ fontSize: "26px", fontWeight: "800", fontFamily: G.serif, background: "linear-gradient(135deg,#fff 40%,rgba(255,255,255,0.3))", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", lineHeight: 1.1 }}>FindIt</div>
+            <div
+              style={{
+                fontSize: "26px",
+                fontWeight: "800",
+                fontFamily: G.serif,
+                background: "linear-gradient(135deg,#fff 40%,rgba(255,255,255,0.3))",
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
+                lineHeight: 1.1,
+              }}
+            >
+              FindIt
+            </div>
           </div>
           <div style={{ display: "flex", gap: "7px", alignItems: "center" }}>
-            <div style={{ background: "rgba(255,255,255,0.06)", border: `1px solid ${G.border}`, borderRadius: "8px", padding: "5px 9px", fontSize: "11px", color: G.muted }}>🇱🇹</div>
-            <button onClick={() => setShowAdd(true)} style={{ background: accent, border: "none", color: G.text, padding: "8px 16px", borderRadius: "9px", fontSize: "12px", fontWeight: "700", cursor: "pointer" }}>
+            <div
+              style={{
+                background: "rgba(255,255,255,0.06)",
+                border: `1px solid ${G.border}`,
+                borderRadius: "8px",
+                padding: "5px 9px",
+                fontSize: "11px",
+                color: G.muted,
+              }}
+            >
+              🇱🇹
+            </div>
+            <button
+              onClick={() => setShowAdd(true)}
+              style={{
+                background: accent,
+                border: "none",
+                color: G.text,
+                padding: "8px 16px",
+                borderRadius: "9px",
+                fontSize: "12px",
+                fontWeight: "700",
+                cursor: "pointer",
+              }}
+            >
               {feedTab === "lost" ? LT.addLost : LT.addFound}
             </button>
           </div>
@@ -1350,20 +2603,69 @@ export default function App() {
             ["found", `◉ ${LT.found}`, items.filter((i) => i.type === "found").length],
             ["lost", `⚠ ${LT.lost}`, items.filter((i) => i.type === "lost").length],
           ].map(([id, label, count]) => (
-            <button key={id} onClick={() => setFeedTab(id)} style={{ flex: 1, padding: "8px", border: "none", borderRadius: "8px", background: feedTab === id ? (id === "lost" ? G.lost : G.found) : "transparent", color: feedTab === id ? G.text : G.muted, fontSize: "12px", fontWeight: "700", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "5px", transition: "all 0.2s" }}>
-              {label} <span style={{ background: "rgba(255,255,255,0.2)", borderRadius: "4px", padding: "1px 6px", fontSize: "10px" }}>{count}</span>
+            <button
+              key={id}
+              onClick={() => setFeedTab(id)}
+              style={{
+                flex: 1,
+                padding: "8px",
+                border: "none",
+                borderRadius: "8px",
+                background: feedTab === id ? (id === "lost" ? G.lost : G.found) : "transparent",
+                color: feedTab === id ? G.text : G.muted,
+                fontSize: "12px",
+                fontWeight: "700",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "5px",
+                transition: "all 0.2s",
+              }}
+            >
+              {label}{" "}
+              <span style={{ background: "rgba(255,255,255,0.2)", borderRadius: "4px", padding: "1px 6px", fontSize: "10px" }}>{count}</span>
             </button>
           ))}
         </div>
 
         <div style={{ position: "relative", marginBottom: "10px" }}>
           <span style={{ position: "absolute", left: "11px", top: "50%", transform: "translateY(-50%)", color: G.dim }}>◎</span>
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={LT.search} style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: `1px solid ${G.border}`, borderRadius: "9px", padding: "9px 12px 9px 30px", color: G.text, fontSize: "13px", outline: "none" }} />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={LT.search}
+            style={{
+              width: "100%",
+              background: "rgba(255,255,255,0.05)",
+              border: `1px solid ${G.border}`,
+              borderRadius: "9px",
+              padding: "9px 12px 9px 30px",
+              color: G.text,
+              fontSize: "13px",
+              outline: "none",
+            }}
+          />
         </div>
 
         <div style={{ display: "flex", gap: "5px", overflowX: "auto", paddingBottom: "4px", marginBottom: "8px" }}>
           {CATEGORIES.map((cat) => (
-            <button key={cat.id} onClick={() => setCatFilter(cat.id)} style={{ background: catFilter === cat.id ? accent : "rgba(255,255,255,0.04)", border: `1px solid ${catFilter === cat.id ? accent : G.border}`, borderRadius: "7px", color: catFilter === cat.id ? G.text : G.muted, padding: "5px 11px", fontSize: "11px", fontWeight: catFilter === cat.id ? "700" : "400", cursor: "pointer", whiteSpace: "nowrap", transition: "all 0.15s" }}>
+            <button
+              key={cat.id}
+              onClick={() => setCatFilter(cat.id)}
+              style={{
+                background: catFilter === cat.id ? accent : "rgba(255,255,255,0.04)",
+                border: `1px solid ${catFilter === cat.id ? accent : G.border}`,
+                borderRadius: "7px",
+                color: catFilter === cat.id ? G.text : G.muted,
+                padding: "5px 11px",
+                fontSize: "11px",
+                fontWeight: catFilter === cat.id ? "700" : "400",
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+                transition: "all 0.15s",
+              }}
+            >
               {cat.icon} {LT.categories[cat.id]}
             </button>
           ))}
@@ -1371,7 +2673,20 @@ export default function App() {
 
         <div style={{ display: "flex", gap: "5px", overflowX: "auto" }}>
           {Object.entries(LT.locations).map(([id, loc]) => (
-            <button key={id} onClick={() => setCountryFilter(countryFilter === id ? null : id)} style={{ background: countryFilter === id ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.03)", border: `1px solid ${countryFilter === id ? "rgba(255,255,255,0.3)" : G.border}`, borderRadius: "7px", color: countryFilter === id ? G.text : G.muted, padding: "5px 9px", fontSize: "11px", cursor: "pointer", whiteSpace: "nowrap" }}>
+            <button
+              key={id}
+              onClick={() => setCountryFilter(countryFilter === id ? null : id)}
+              style={{
+                background: countryFilter === id ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.03)",
+                border: `1px solid ${countryFilter === id ? "rgba(255,255,255,0.3)" : G.border}`,
+                borderRadius: "7px",
+                color: countryFilter === id ? G.text : G.muted,
+                padding: "5px 9px",
+                fontSize: "11px",
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
               {loc.flag} {loc.label}
             </button>
           ))}
@@ -1384,14 +2699,29 @@ export default function App() {
           { l: LT.total, v: items.length },
           { l: LT.returned, v: 142 },
         ].map((s, i) => (
-          <div key={s.l} style={{ flex: 1, padding: "10px 0", textAlign: "center", borderRight: i < 2 ? "1px solid rgba(255,255,255,0.05)" : "none" }}>
+          <div
+            key={s.l}
+            style={{
+              flex: 1,
+              padding: "10px 0",
+              textAlign: "center",
+              borderRight: i < 2 ? "1px solid rgba(255,255,255,0.05)" : "none",
+            }}
+          >
             <div style={{ fontSize: "18px", fontWeight: "800", color: G.text }}>{s.v}</div>
             <div style={{ fontSize: "10px", color: G.dim, marginTop: "1px" }}>{s.l}</div>
           </div>
         ))}
       </div>
 
-      <div style={{ padding: "18px 20px 100px", display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: "12px" }}>
+      <div
+        style={{
+          padding: "18px 20px 100px",
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))",
+          gap: "12px",
+        }}
+      >
         {filtered.length === 0 ? (
           <div style={{ gridColumn: "1/-1", textAlign: "center", padding: "60px 0", color: G.dim }}>
             <div style={{ fontSize: "32px", marginBottom: "10px" }}>○</div>
@@ -1403,15 +2733,53 @@ export default function App() {
         )}
       </div>
 
-      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "rgba(6,10,15,0.97)", backdropFilter: "blur(16px)", borderTop: "1px solid rgba(255,255,255,0.07)", padding: "10px 20px 18px", display: "flex", gap: "4px" }}>
+      <div
+        style={{
+          position: "fixed",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          background: "rgba(6,10,15,0.97)",
+          backdropFilter: "blur(16px)",
+          borderTop: "1px solid rgba(255,255,255,0.07)",
+          padding: "10px 20px 18px",
+          display: "flex",
+          gap: "4px",
+        }}
+      >
         {[
           ["feed", "◈", LT.feed],
           ["add", "+", LT.add],
           ["profile", "▤", LT.cabinet],
         ].map(([id, icon, label]) => (
-          <button key={id} onClick={() => (id === "add" ? setShowAdd(true) : setScreen(id))} style={{ flex: 1, background: screen === id && id !== "add" ? "rgba(255,255,255,0.08)" : id === "add" ? G.found : "transparent", border: `1px solid ${screen === id && id !== "add" ? "rgba(255,255,255,0.14)" : id === "add" ? G.found : "transparent"}`, borderRadius: "10px", color: G.text, padding: "8px 6px", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: "3px", transition: "all 0.2s" }}>
+          <button
+            key={id}
+            onClick={() => (id === "add" ? setShowAdd(true) : setScreen(id))}
+            style={{
+              flex: 1,
+              background: screen === id && id !== "add" ? "rgba(255,255,255,0.08)" : id === "add" ? G.found : "transparent",
+              border: `1px solid ${screen === id && id !== "add" ? "rgba(255,255,255,0.14)" : id === "add" ? G.found : "transparent"}`,
+              borderRadius: "10px",
+              color: G.text,
+              padding: "8px 6px",
+              cursor: "pointer",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "3px",
+              transition: "all 0.2s",
+            }}
+          >
             <span style={{ fontSize: id === "add" ? "22px" : "18px", fontWeight: id === "add" ? "800" : "400" }}>{icon}</span>
-            <span style={{ fontSize: "10px", fontWeight: screen === id || id === "add" ? "700" : "400", color: screen === id || id === "add" ? G.text : G.muted }}>{label}</span>
+            <span
+              style={{
+                fontSize: "10px",
+                fontWeight: screen === id || id === "add" ? "700" : "400",
+                color: screen === id || id === "add" ? G.text : G.muted,
+              }}
+            >
+              {label}
+            </span>
           </button>
         ))}
       </div>
