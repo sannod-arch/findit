@@ -207,17 +207,17 @@ async function dbSaveMessage(matchId, text) {
 // ─── AI KLASIFIKACIJA (per Edge Function arba tiesiai) ────────────────────────
 async function classifyImage(base64, mimeType, itemType) {
   // Jei Supabase prijungtas — naudojame Edge Function (raktas paslėptas)
-  if (EDGE_FN_URL) {
-    const res = await fetch(EDGE_FN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "apikey": SUPABASE_ANON_KEY },
-      body: JSON.stringify({ image: base64, mimeType, itemType }),
-    });
-    if (!res.ok) { const e = await res.json(); throw new Error(e.error || "Edge Function klaida"); }
-    const parsed = await res.json();
-    if (!parsed.secretQuestions?.length) parsed.secretQuestions = SECRET_QUESTIONS[parsed.category] || SECRET_QUESTIONS.other;
-    return parsed;
-  }
+{
+  const res = await fetch("/api/classify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image: base64, mimeType, itemType }),
+  });
+  if (!res.ok) { const e = await res.json(); throw new Error(e.error || "Serverio klaida"); }
+  const parsed = await res.json();
+  if (!parsed.secretQuestions?.length) parsed.secretQuestions = SECRET_QUESTIONS[parsed.category] || SECRET_QUESTIONS.other;
+  return parsed;
+}
 
   // Demo režimas — lokalus Gemini skambutis (raktas matomas frontende, tik testui)
   const localKey = window.__geminiKey || "";
