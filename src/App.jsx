@@ -47,7 +47,7 @@ const LT = {
   statusResolved: "✓ Rasta",
   statusExpired:  "○ Pasibaigęs",
   markUrgent:   "🔴 Pažymėti svarbiu",
-  markResolved: "✓ Pažymėti „rasta"",
+  markResolved: '✓ Pažymėti „rasta"',
   markActive:   "● Grąžinti į aktyvų",
   editItem:   "✎ Redaguoti",
   deleteItem: "🗑 Šalinti",
