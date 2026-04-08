@@ -6,7 +6,7 @@ const SUPABASE_URL      = import.meta.env.VITE_SUPABASE_URL || "";
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
 
 // !! PAKEISKITE SAVO SLAPTAŽODŽIU !!
-const ADMIN_PASSWORD = "your_admin_password_here";
+const ADMIN_PASSWORD = "55555";
 
 const supabase = SUPABASE_URL && SUPABASE_ANON_KEY
   ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
