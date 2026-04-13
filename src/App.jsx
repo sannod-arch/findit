@@ -471,34 +471,136 @@ function PhotoGallery({ photos, onAdd, onRemove }) {
 // ─── LEAFLET ŽEMĖLAPIS ────────────────────────────────────────────────────────
 function LeafletMap({ pin, buffer, onPinChange, interactive = true, height = 200 }) {
   const id = useRef(`map-${Math.random().toString(36).slice(2)}`).current;
-  const mapRef = useRef(null), markerRef = useRef(null), circleRef = useRef(null);
+  const mapRef = useRef(null);
+  const markerRef = useRef(null);
+  const circleRef = useRef(null);
+
   useEffect(() => {
     const init = () => {
-      const L = window.L, el = document.getElementById(id);
+      const L = window.L;
+      const el = document.getElementById(id);
       if (!el || mapRef.current) return;
-      const map = L.map(id, { zoomControl: true, attributionControl: false }).setView([54.6872, 25.2797], 13);
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
+
+      const map = L.map(id, {
+        zoomControl: true,
+        attributionControl: false,
+      }).setView([54.6872, 25.2797], 13);
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+      }).addTo(map);
+
       mapRef.current = map;
-      if (interactive && onPinChange) map.on("click", e => onPinChange({ lat: e.latlng.lat, lng: e.latlng.lng }));
+
+      setTimeout(() => {
+        map.invalidateSize();
+      }, 100);
+
+      if (interactive && onPinChange) {
+        map.on("click", (e) => {
+          onPinChange({ lat: e.latlng.lat, lng: e.latlng.lng });
+        });
+      }
     };
-    if (window.L) { setTimeout(init, 50); return; }
-    const link = document.createElement("link"); link.rel = "stylesheet"; link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"; document.head.appendChild(link);
-    const s = document.createElement("script"); s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"; s.onload = () => setTimeout(init, 50); document.head.appendChild(s);
-    return () => { if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
+
+    if (window.L) {
+      setTimeout(init, 50);
+      return;
+    }
+
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+    document.head.appendChild(link);
+
+    const s = document.createElement("script");
+    s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    s.onload = () => setTimeout(init, 50);
+    document.head.appendChild(s);
+
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
   }, []);
+
   useEffect(() => {
-    const L = window.L, map = mapRef.current;
+    const L = window.L;
+    const map = mapRef.current;
     if (!map || !L) return;
-    if (markerRef.current) { markerRef.current.remove(); markerRef.current = null; }
-    if (circleRef.current) { circleRef.current.remove(); circleRef.current = null; }
+
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 50);
+
+    if (markerRef.current) {
+      markerRef.current.remove();
+      markerRef.current = null;
+    }
+
+    if (circleRef.current) {
+      circleRef.current.remove();
+      circleRef.current = null;
+    }
+
     if (!pin) return;
-    const icon = L.divIcon({ html: `<div style="width:18px;height:18px;background:${buffer ? G.warn : G.found};border:2.5px solid #fff;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,0.5)"></div>`, iconSize: [18, 18], iconAnchor: [9, 9], className: "" });
-    markerRef.current = L.marker([pin.lat, pin.lng], { icon, draggable: interactive }).addTo(map);
-    if (interactive && onPinChange) markerRef.current.on("dragend", e => { const p = e.target.getLatLng(); onPinChange({ lat: p.lat, lng: p.lng }); });
-    if (buffer) circleRef.current = L.circle([pin.lat, pin.lng], { radius: buffer, color: G.warn, fillColor: G.warn, fillOpacity: 0.12, weight: 1.5, dashArray: "5,5" }).addTo(map);
+
+    const hasBuffer = buffer != null && buffer > 0;
+
+    const icon = L.divIcon({
+      html: `<div style="
+        width:18px;
+        height:18px;
+        background:${hasBuffer ? G.warn : G.found};
+        border:2.5px solid #fff;
+        border-radius:50%;
+        box-shadow:0 2px 8px rgba(0,0,0,0.5);
+      "></div>`,
+      iconSize: [18, 18],
+      iconAnchor: [9, 9],
+      className: "custom-pin",
+    });
+
+    markerRef.current = L.marker([pin.lat, pin.lng], {
+      icon,
+      draggable: interactive,
+    }).addTo(map);
+
+    if (interactive && onPinChange) {
+      markerRef.current.on("dragend", (e) => {
+        const p = e.target.getLatLng();
+        onPinChange({ lat: p.lat, lng: p.lng });
+      });
+    }
+
+    if (hasBuffer) {
+      circleRef.current = L.circle([pin.lat, pin.lng], {
+        radius: buffer,
+        color: G.warn,
+        fillColor: G.warn,
+        fillOpacity: 0.12,
+        weight: 1.5,
+        dashArray: "5,5",
+      }).addTo(map);
+    }
+
     map.setView([pin.lat, pin.lng], 15);
-  }, [pin, buffer]);
-  return <div id={id} style={{ width: "100%", height: `${height}px`, borderRadius: "12px", overflow: "hidden", background: "#0e1621" }} />;
+  }, [pin, buffer, interactive, onPinChange]);
+
+  return (
+    <div
+      id={id}
+      style={{
+        width: "100%",
+        height: `${height}px`,
+        borderRadius: 12,
+        overflow: "hidden",
+        background: "#0e1621",
+      }}
+    />
+  );
 }
 
 // ─── GEOLOKACIJOS ŽINGSNIS ────────────────────────────────────────────────────
@@ -530,7 +632,12 @@ function GeoStep({ onDone, photoFile }) {
     if (coords) { await updatePin(coords); setPhase("map"); } else setGeoError(LT.geoNoExif);
   };
 
-  const confirm = () => onDone({ pin: pin ? { lat: pin.lat, lng: pin.lng } : null, buffer: buffer || null, address });
+  const confirm = () =>
+  onDone({
+    pin: pin ? { lat: pin.lat, lng: pin.lng } : null,
+    buffer: pin ? (buffer ?? null) : null,
+    address,
+  });
 
   if (detecting) return <div style={{ textAlign: "center", padding: "36px" }}><Spinner size={32} color={G.found} /><div style={{ marginTop: "12px", fontSize: "13px", color: G.muted }}>{LT.geoDetecting}</div></div>;
 
@@ -555,7 +662,7 @@ function GeoStep({ onDone, photoFile }) {
 
   return (
     <div>
-      <LeafletMap pin={pin} buffer={buffer || 0} onPinChange={updatePin} interactive height={200} />
+      <LeafletMap pin={pin} buffer={buffer ?? 0} onPinChange={updatePin} interactive height={200} />
       {!pin && <div style={{ fontSize: "11px", color: G.muted, textAlign: "center", marginTop: "6px" }}>{LT.geoSetPin}</div>}
       {pin && (<>
         <div style={{ display: "flex", gap: "6px", margin: "10px 0" }}>
@@ -837,7 +944,7 @@ function ItemFormModal({ onClose, onSave, defaultType, editItem, user }) {
                   {geoData.buffer ? <div style={{ fontSize: "10px", color: G.warn, marginTop: "2px" }}>◎ buferis {geoData.buffer} m</div> : null}
                 </div>
               </div>
-              {geoData.pin && <LeafletMap pin={geoData.pin} buffer={geoData.buffer || 0} interactive={false} height={160} />}
+              {geoData.pin && <LeafletMap pin={geoData.pin} buffer={geoData.buffer ?? 0} interactive={false} height={160} />}
               <div style={{ display: "flex", gap: "7px", marginTop: "12px" }}>
                 <button onClick={() => setGeoData(null)} style={{ flex: 1, background: "rgba(255,255,255,0.05)", border: "none", color: G.muted, padding: "11px", borderRadius: "10px", cursor: "pointer", fontSize: "12px" }}>{LT.geoChange}</button>
                 <button onClick={() => setStep(4)} style={{ flex: 2, background: accent, border: "none", color: G.text, padding: "11px", borderRadius: "10px", fontWeight: "700", fontSize: "13px", cursor: "pointer" }}>{LT.next}</button>
