@@ -218,7 +218,7 @@ async function dbUpdateItem(id, changes) {
   const { error } = await supabase.from("items").update(changes).eq("id", id);
   if (error) throw error;
 }
-
+ 
 async function dbUpdateStatus(id, status_label) {
   if (!supabase) return;
   const { error } = await supabase.from("items").update({ status_label }).eq("id", id);
