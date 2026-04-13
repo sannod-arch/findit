@@ -1130,7 +1130,7 @@ function DetailModal({ item, onClose, user }) {
               <div style={{ fontSize: "13px", color: G.text }}>{item.location}</div>
               <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.38)", marginTop: "3px" }}>{item.city}</div>
             </div>
-            {item.geoPin && <div style={{ marginTop: "12px" }}><LeafletMap pin={item.geoPin} buffer={item.geoBuffer || 0} interactive={false} height={160} /></div>}
+            {item.geoPin && <div style={{ marginTop: "12px" }}><LeafletMap pin={item.geoPin} buffer={item.geoBuffer ?? 0} interactive={false} height={160} /></div>}
           </>)}
 
           {tab === "verify" && (<>
