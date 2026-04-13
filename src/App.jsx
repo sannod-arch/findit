@@ -794,7 +794,7 @@ function ItemFormModal({ onClose, onSave, defaultType, editItem, user }) {
   const [removedPhotos, setRemovedPhotos] = useState([]);
   const [rawFile, setRawFile] = useState(null);
   const [geoData, setGeoData] = useState(
-    editItem ? { pin: editItem.geoPin, buffer: editItem.geoBuffer, address: editItem.location || "" } : null
+    editItem ? { pin: editItem.geoPin, buffer: editItem.geoBuffer, address: editItem.location ?? "" } : null
   );
   const [selectedQ, setSelectedQ] = useState(editItem?.secretQuestion || "");
   const [saving, setSaving] = useState(false);
