@@ -11,7 +11,12 @@ const ADMIN_PASSWORD = '55555';
 const supabase = SUPABASE_URL && SUPABASE_ANON_KEY
   ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
   : null;
-
+// Unikalus įrenginio ID (generuojamas vieną kartą)
+const DEVICE_ID = (() => {
+  let id = localStorage.getItem("findit_device");
+  if (!id) { id = crypto.randomUUID(); localStorage.setItem("findit_device", id); }
+  return id;
+})();
 // ─── DIZAINO ŽETONAI ──────────────────────────────────────────────────────────
 const G = {
   bg: "#060a0f", card: "#0d1117", border: "rgba(255,255,255,0.08)",
@@ -1068,17 +1073,44 @@ function DetailModal({ item, onClose, user }) {
   const [photoIdx, setPhotoIdx] = useState(0);
   const [answer, setAnswer] = useState("");
   const [answerStatus, setAnswerStatus] = useState(null); // null | sending | sent | error
+  const [currentMatchId, setCurrentMatchId] = useState(null);
   const colors = CATEGORY_COLORS[item.category] || CATEGORY_COLORS.other;
   const isLost = item.type === "lost";
   const bg = item.color || colors.bg, accent = item.accent || colors.accent;
   const photos = item.photos || [];
 
-  const send = () => {
-    if (!chatMsg.trim()) return;
-    setMsgs(m => [...m, { from: "me", text: chatMsg }]);
-    setChatMsg("");
-    setTimeout(() => setMsgs(m => [...m, { from: "other", text: "Gavau žinutę, atsakysiu netrukus!" }]), 800);
-  };
+  const send = async () => {
+  if (!chatMsg.trim()) return;
+  const text = chatMsg.trim();
+  setChatMsg("");
+
+  // Lokaliai pridėti iš karto
+  setMsgs(m => [...m, { from: "me", text }]);
+
+  try {
+    // Rasti arba sukurti match
+    let matchId = currentMatchId; // reikia saugoti state
+    if (!matchId) {
+      const { data: match, error } = await supabase
+        .from("matches")
+        .insert({ lost_id: item.id, found_id: item.id, score: 0, status: "pending" })
+        .select()
+        .single();
+      if (error) throw error;
+      matchId = match.id;
+      setCurrentMatchId(matchId);
+    }
+
+    await supabase.from("messages").insert({
+      match_id: matchId,
+      sender_anon: user?.id || "guest",
+      text,
+    });
+  } catch (e) {
+    console.error("Žinutė neišsaugota:", e.message);
+    setMsgs(m => [...m, { from: "system", text: "⚠ Žinutė neišsaugota" }]);
+  }
+};
 
  const sendAnswer = async () => {
   if (!answer.trim()) return;
