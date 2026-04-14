@@ -474,6 +474,7 @@ function LeafletMap({ pin, buffer, onPinChange, interactive = true, height = 200
   const mapRef = useRef(null);
   const markerRef = useRef(null);
   const circleRef = useRef(null);
+  const [mapReady, setMapReady] = useState(false);
 
  useEffect(() => {
   const init = () => {
@@ -493,6 +494,7 @@ function LeafletMap({ pin, buffer, onPinChange, interactive = true, height = 200
     mapRef.current = map;
 
     setTimeout(() => map.invalidateSize(), 100);
+    setMapReady(true); 
 
     if (interactive && onPinChange) {
       map.on("click", (e) => {
@@ -585,7 +587,7 @@ function LeafletMap({ pin, buffer, onPinChange, interactive = true, height = 200
     }
 
     map.setView([pin.lat, pin.lng], 15);
-  }, [pin, buffer, interactive, onPinChange]);
+ }, [pin, buffer, interactive, onPinChange, mapReady]);
 
   return (
     <div
