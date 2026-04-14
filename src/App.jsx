@@ -847,7 +847,7 @@ function ItemFormModal({ onClose, onSave, defaultType, editItem, user }) {
           category: form.category, tag: LT.categories[form.category] || "Kita",
           color: catColors.bg, accent: catColors.accent,
           secretQuestion, location: geoData?.address || "",
-          geoPin: geoData?.pin || null, geoBuffer: geoData?.buffer || null,
+          geoPin: geoData?.pin || null, geoBuffer: geoData?.buffer ?? null,
           photos: existingPhotos,
         });
       } else {
