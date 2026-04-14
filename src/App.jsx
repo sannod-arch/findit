@@ -701,8 +701,9 @@ function AIPhotoAnalyzer({ onResult, onSkip, itemType }) {
     setRawFile(file); setPhase("loading"); setError(null);
     const compressed = await compressImage(file); setPreview(compressed);
     try { const ai = await classifyImage(compressed.split(",")[1], "image/jpeg", itemType); setResult(ai); setPhase("result"); }
-     (err) { setError(err.message); setPhase("error"); }
+    catch (err) { setError(err.message); setPhase("error"); }
   }, [itemType]);
+
 
   const handleFile = e => { if (e.target.files[0]) processFile(e.target.files[0]); };
   const reset = () => { setPhase("idle"); setPreview(null); setResult(null); setRawFile(null); };
