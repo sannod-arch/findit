@@ -382,7 +382,7 @@ async function reverseGeocode(lat, lng) {
     const d = await r.json(); const a = d.address || {};
     const parts = [a.road, a.suburb || a.neighbourhood, a.city || a.town || a.village].filter(Boolean);
     return parts.slice(0, 2).join(", ") || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-  }  { return `${lat.toFixed(4)}, ${lng.toFixed(4)}`; }
+ }  catch { return `${lat.toFixed(4)}, ${lng.toFixed(4)}`; }
 }
 
 // ─── MAŽOS KOMPONENTES ────────────────────────────────────────────────────────
