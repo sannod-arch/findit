@@ -374,7 +374,7 @@ async function loadExifr() {
 }
 async function readExifGps(file) {
   try { const exifr = await loadExifr(); const r = await exifr.gps(file); return r?.latitude && r?.longitude ? { lat: r.latitude, lng: r.longitude } : null; }
-   { return null; }
+  catch { return null; }
 }
 async function reverseGeocode(lat, lng) {
   try {
