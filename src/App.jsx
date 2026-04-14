@@ -1493,14 +1493,32 @@ export default function App() {
         dbLoadDismissed(data.session.user.id).then(setDismissed);
       }
     });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
-      const u = session?.user || null;
-      setUser(u);
-      if (u) dbLoadDismissed(u.id).then(setDismissed);
-      else setDismissed(new Set());
-    });
-    return () => subscription.unsubscribe();
-  }, []);
+ const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+  const u = session?.user || null;
+
+  if (event === "SIGNED_OUT") {
+    setItems([]);        // iš karto išvalyti ekraną
+    setUser(null);
+    setIsAdmin(false);
+    setDismissed(new Set());
+    const fresh = await dbLoadItems(false);
+    setItems(fresh);     // užkrauti viešus skelbimus
+  } else if (event === "SIGNED_IN" && u) {
+    setItems([]);        // išvalyti prieš kraunant naujus
+    setUser(u);
+    const [fresh, dismissed] = await Promise.all([
+      dbLoadItems(false),
+      dbLoadDismissed(u.id),
+    ]);
+    setItems(fresh);
+    setDismissed(dismissed);
+  } else {
+    setUser(u);
+    if (u) dbLoadDismissed(u.id).then(setDismissed);
+    else setDismissed(new Set());
+  }
+});
+return () => subscription.unsubscribe();
 
   // Krauti skelbimai
   useEffect(() => {
@@ -1546,12 +1564,14 @@ export default function App() {
     if (user) await dbDismissMatch(matchKey, user.id);
   };
 
- const handleSignOut = async () => {
-  if (supabase) await supabase.auth.signOut();
+const handleSignOut = async () => {
+  setItems([]);           // ← iš karto išvalyti, SINCHRONIŠKAI
   setUser(null);
   setIsAdmin(false);
   setDismissed(new Set());
-  dbLoadItems(false).then(setItems);
+  if (supabase) await supabase.auth.signOut();
+  const fresh = await dbLoadItems(false);
+  setItems(fresh);
 };
 
   // Nuosavybės tikrinimas — TIK pagal user_id
