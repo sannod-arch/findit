@@ -289,7 +289,7 @@ async function classifyImage(base64, mimeType, itemType) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ image: base64, mimeType, itemType }),
   });
-  if (!res.ok) { const e = await res.json().(() => ({})); throw new Error(e.error || "Serverio klaida"); }
+ if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "Serverio klaida"); }
   const parsed = await res.json();
   if (!parsed.secretQuestions?.length) parsed.secretQuestions = SECRET_QUESTIONS[parsed.category] || SECRET_QUESTIONS.other;
   return parsed;
