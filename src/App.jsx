@@ -1519,7 +1519,7 @@ export default function App() {
   }
 });
 return () => subscription.unsubscribe();
-
+  }, []);
   // Krauti skelbimai
   useEffect(() => {
     setLoadingItems(true);
