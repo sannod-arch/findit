@@ -1508,8 +1508,15 @@ export default function App() {
   };
 
   const handleSignOut = async () => {
+    // ✅ Apsauga: svečias negali kurti skelbimų
+  if (!user) {
+    alert("Prisijunkite norėdami sukurti skelbimą");
+    return;
+  }
     if (supabase) await supabase.auth.signOut();
     setUser(null); setIsAdmin(false); setDismissed(new Set());
+    // ✅ Perkrauti skelbimus iš DB (be prisijungimo filtro)
+  dbLoadItems(false).then(setItems);
   };
 
   // Nuosavybės tikrinimas — TIK pagal user_id
