@@ -820,60 +820,66 @@ function ItemFormModal({ onClose, onSave, defaultType, editItem, user }) {
   };
 
   const handleSubmit = async () => {
-    setSaving(true);
-    try {
-      const catColors = CATEGORY_COLORS[form.category] || CATEGORY_COLORS.other;
-      const loc = LT.locations[form.country];
-      const secretQuestion = selectedQ || form.customQ || null;
+  // Svečias negali kurti naujų skelbimų
+  if (!isEdit && !user) {
+    alert("Prisijunkite norėdami sukurti skelbimą");
+    return;
+  }
 
-      if (isEdit) {
-        // Šalinti nuotraukas
-        for (const url of removedPhotos) await dbRemovePhoto(url, editItem.id);
-        // Naujų nuotraukų įkėlimas
-        const newPhotoUrls = photos.filter(p => p.startsWith("data:"));
-        await dbUpdateItem(editItem.id, {
-          title: form.title, description: form.description,
-          category: form.category, secret_q: secretQuestion,
-          location: geoData?.address || "",
-          lat: geoData?.pin?.lat ?? null,
-          lng: geoData?.pin?.lng ?? null,
-          geo_buffer: geoData?.buffer ?? null,
-          status_label: editItem.status || "active",
-        });
-        if (newPhotoUrls.length) await uploadPhotos(editItem.id, newPhotoUrls);
-        // Atnaujinti lokaliai
-        const existingPhotos = photos.filter(p => p.startsWith("http"));
-        onSave({
-          ...editItem,
-          title: form.title, description: form.description,
-          category: form.category, tag: LT.categories[form.category] || "Kita",
-          color: catColors.bg, accent: catColors.accent,
-          secretQuestion, location: geoData?.address || "",
-          geoPin: geoData?.pin || null, geoBuffer: geoData?.buffer ?? null,
-          photos: existingPhotos,
-        });
-      } else {
-        const payload = {
-          user_id: user?.id || null,
-          anon_id: user?.id || "guest",
-          type, category: form.category || "other",
-          title: form.title, description: form.description,
-          location: geoData?.address || "",
-          lat: geoData?.pin?.lat ?? null,
-          lng: geoData?.pin?.lng ?? null,
-          geo_buffer: geoData?.buffer ?? null,
-          country: form.country, city: loc?.city || "Vilnius",
-          blurred: form.blurPhoto, secret_q: secretQuestion,
-          tags: aiResult?.tags || form.title.toLowerCase().split(" "),
-          status_label: "active",
-        };
-        const saved = await dbSaveItem(payload, photos.filter(p => p.startsWith("data:")));
-        onSave({ ...saved, color: catColors.bg, accent: catColors.accent, tag: LT.categories[form.category] || "Kita" });
-      }
-      onClose();
-    } catch (e) { alert("Klaida: " + e.message); }
-    finally { setSaving(false); }
-  };
+  setSaving(true);
+  try {
+    const catColors = CATEGORY_COLORS[form.category] || CATEGORY_COLORS.other;
+    const loc = LT.locations[form.country];
+    const secretQuestion = selectedQ || form.customQ || null;
+
+    if (isEdit) {
+      // Šalinti nuotraukas
+      for (const url of removedPhotos) await dbRemovePhoto(url, editItem.id);
+      // Naujų nuotraukų įkėlimas
+      const newPhotoUrls = photos.filter(p => p.startsWith("data:"));
+      await dbUpdateItem(editItem.id, {
+        title: form.title, description: form.description,
+        category: form.category, secret_q: secretQuestion,
+        location: geoData?.address || "",
+        lat: geoData?.pin?.lat ?? null,
+        lng: geoData?.pin?.lng ?? null,
+        geo_buffer: geoData?.buffer ?? null,
+        status_label: editItem.status || "active",
+      });
+      if (newPhotoUrls.length) await uploadPhotos(editItem.id, newPhotoUrls);
+      // Atnaujinti lokaliai
+      const existingPhotos = photos.filter(p => p.startsWith("http"));
+      onSave({
+        ...editItem,
+        title: form.title, description: form.description,
+        category: form.category, tag: LT.categories[form.category] || "Kita",
+        color: catColors.bg, accent: catColors.accent,
+        secretQuestion, location: geoData?.address || "",
+        geoPin: geoData?.pin || null, geoBuffer: geoData?.buffer ?? null,
+        photos: existingPhotos,
+      });
+    } else {
+      const payload = {
+        user_id: user.id,
+        anon_id: user.id,
+        type, category: form.category || "other",
+        title: form.title, description: form.description,
+        location: geoData?.address || "",
+        lat: geoData?.pin?.lat ?? null,
+        lng: geoData?.pin?.lng ?? null,
+        geo_buffer: geoData?.buffer ?? null,
+        country: form.country, city: loc?.city || "Vilnius",
+        blurred: form.blurPhoto, secret_q: secretQuestion,
+        tags: aiResult?.tags || form.title.toLowerCase().split(" "),
+        status_label: "active",
+      };
+      const saved = await dbSaveItem(payload, photos.filter(p => p.startsWith("data:")));
+      onSave({ ...saved, color: catColors.bg, accent: catColors.accent, tag: LT.categories[form.category] || "Kita" });
+    }
+    onClose();
+  } catch (e) { alert("Klaida: " + e.message); }
+  finally { setSaving(false); }
+};
 
   const Inp = ({ k, ph, multi }) => multi
     ? <textarea value={form[k]} onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))} placeholder={ph} style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: `1px solid ${G.border}`, borderRadius: "9px", padding: "10px 13px", color: G.text, fontSize: "13px", outline: "none", marginBottom: "9px", boxSizing: "border-box", resize: "none", height: "72px", fontFamily: G.sans }} />
@@ -1508,17 +1514,13 @@ export default function App() {
     if (user) await dbDismissMatch(matchKey, user.id);
   };
 
-  const handleSignOut = async () => {
-    // ✅ Apsauga: svečias negali kurti skelbimų
-  if (!user) {
-    alert("Prisijunkite norėdami sukurti skelbimą");
-    return;
-  }
-    if (supabase) await supabase.auth.signOut();
-    setUser(null); setIsAdmin(false); setDismissed(new Set());
-    // ✅ Perkrauti skelbimus iš DB (be prisijungimo filtro)
+ const handleSignOut = async () => {
+  if (supabase) await supabase.auth.signOut();
+  setUser(null);
+  setIsAdmin(false);
+  setDismissed(new Set());
   dbLoadItems(false).then(setItems);
-  };
+};
 
   // Nuosavybės tikrinimas — TIK pagal user_id
   const canManage = item => {
