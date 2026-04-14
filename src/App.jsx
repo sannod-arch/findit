@@ -1074,17 +1074,18 @@ function DetailModal({ item, onClose, user }) {
     setTimeout(() => setMsgs(m => [...m, { from: "other", text: "Gavau žinutę, atsakysiu netrukus!" }]), 800);
   };
 
-  const sendAnswer = async () => {
-    if (!answer.trim()) return;
-    if (!user) { alert(LT.signInToVerify); return; }
-    setAnswerStatus("sending");
-    try {
-      await dbSendVerificationAnswer(item.id, answer.trim(), user.id);
-      setAnswerStatus("sent");
-    } catch {
-      setAnswerStatus("error");
-    }
-  };
+ const sendAnswer = async () => {
+  if (!answer.trim()) return;
+  if (!user) { alert(LT.signInToVerify); return; }
+  setAnswerStatus("sending");
+  try {
+    await dbSendVerificationAnswer(item.id, answer.trim(), user.id);
+    setAnswerStatus("sent");
+  } catch (e) {
+    console.error("Verifikacijos klaida:", e); // ← PRIDĖKITE
+    setAnswerStatus("error");
+  }
+};
 
   return (<>
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.82)", backdropFilter: "blur(10px)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
