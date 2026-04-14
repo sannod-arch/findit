@@ -289,7 +289,7 @@ async function classifyImage(base64, mimeType, itemType) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ image: base64, mimeType, itemType }),
   });
- if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "Serverio klaida"); }
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "Serverio klaida"); }
   const parsed = await res.json();
   if (!parsed.secretQuestions?.length) parsed.secretQuestions = SECRET_QUESTIONS[parsed.category] || SECRET_QUESTIONS.other;
   return parsed;
@@ -382,7 +382,7 @@ async function reverseGeocode(lat, lng) {
     const d = await r.json(); const a = d.address || {};
     const parts = [a.road, a.suburb || a.neighbourhood, a.city || a.town || a.village].filter(Boolean);
     return parts.slice(0, 2).join(", ") || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
- }  catch { return `${lat.toFixed(4)}, ${lng.toFixed(4)}`; }
+  } catch { return `${lat.toFixed(4)}, ${lng.toFixed(4)}`; }
 }
 
 // ─── MAŽOS KOMPONENTES ────────────────────────────────────────────────────────
@@ -704,7 +704,6 @@ function AIPhotoAnalyzer({ onResult, onSkip, itemType }) {
     catch (err) { setError(err.message); setPhase("error"); }
   }, [itemType]);
 
-
   const handleFile = e => { if (e.target.files[0]) processFile(e.target.files[0]); };
   const reset = () => { setPhase("idle"); setPreview(null); setResult(null); setRawFile(null); };
   const catColors = result ? (CATEGORY_COLORS[result.category] || CATEGORY_COLORS.other) : null;
@@ -872,7 +871,7 @@ function ItemFormModal({ onClose, onSave, defaultType, editItem, user }) {
         onSave({ ...saved, color: catColors.bg, accent: catColors.accent, tag: LT.categories[form.category] || "Kita" });
       }
       onClose();
-    }  (e) { alert("Klaida: " + e.message); }
+    } catch (e) { alert("Klaida: " + e.message); }
     finally { setSaving(false); }
   };
 
@@ -1075,18 +1074,17 @@ function DetailModal({ item, onClose, user }) {
     setTimeout(() => setMsgs(m => [...m, { from: "other", text: "Gavau žinutę, atsakysiu netrukus!" }]), 800);
   };
 
- const sendAnswer = async () => {
-  if (!answer.trim()) return;
-  if (!user) { alert(LT.signInToVerify); return; }
-  setAnswerStatus("sending");
-  try {
-    await dbSendVerificationAnswer(item.id, answer.trim(), user.id);
-    setAnswerStatus("sent");
-  } catch (e) {
-    console.error("Verifikacijos klaida:", e); // ← PRIDĖKITE
-    setAnswerStatus("error");
-  }
-};
+  const sendAnswer = async () => {
+    if (!answer.trim()) return;
+    if (!user) { alert(LT.signInToVerify); return; }
+    setAnswerStatus("sending");
+    try {
+      await dbSendVerificationAnswer(item.id, answer.trim(), user.id);
+      setAnswerStatus("sent");
+    } catch {
+      setAnswerStatus("error");
+    }
+  };
 
   return (<>
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.82)", backdropFilter: "blur(10px)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
@@ -1468,7 +1466,7 @@ export default function App() {
   // Krauti skelbimai
   useEffect(() => {
     setLoadingItems(true);
-    dbLoadItems(isAdmin).then(data => { setItems(data); setLoadingItems(false); }).(() => setLoadingItems(false));
+    dbLoadItems(isAdmin).then(data => { setItems(data); setLoadingItems(false); }).catch(() => setLoadingItems(false));
   }, [isAdmin]);
 
   // Pridėti skelbimą
@@ -1502,7 +1500,7 @@ export default function App() {
     await dbUpdateStatus(id, "deleted");
     setItems(prev => prev.filter(i => i.id !== id));
   };
-ca
+
   // Atmesti sutapimą — išsaugoti DB
   const handleDismiss = async matchKey => {
     setDismissed(prev => new Set([...prev, matchKey]));
