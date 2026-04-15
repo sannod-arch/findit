@@ -1750,7 +1750,10 @@ const handleSignOut = async () => {
         ))}
       </div>
 
-      {selectedItem && <DetailModal item={selectedItem} onClose={() => setSelectedItem(null)} user={user} />}
+      {selectedItem && (() => {
+  const liveItem = items.find(i => i.id === selectedItem.id) || selectedItem;
+  return <DetailModal item={liveItem} onClose={() => setSelectedItem(null)} user={user} />;
+})()}
       {showAdd && <ItemFormModal onClose={() => setShowAdd(false)} onSave={handleAdd} defaultType={feedTab} user={user} />}
       {editItem && <ItemFormModal onClose={() => setEditItem(null)} onSave={updated => { handleEdit(updated); setEditItem(null); }} editItem={editItem} user={user} />}
       {showAuth && <AuthModal onClose={() => setShowAuth(false)} onAdminAuth={() => setIsAdmin(true)} />}
