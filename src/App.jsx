@@ -1497,6 +1497,7 @@ export default function App() {
   const u = session?.user || null;
 
   if (event === "SIGNED_OUT") {
+    setSelectedItem(null);
     setItems([]);        // iš karto išvalyti ekraną
     setUser(null);
     setIsAdmin(false);
@@ -1504,6 +1505,7 @@ export default function App() {
     const fresh = await dbLoadItems(false);
     setItems(fresh);     // užkrauti viešus skelbimus
   } else if (event === "SIGNED_IN" && u) {
+    setSelectedItem(null);
     setItems([]);        // išvalyti prieš kraunant naujus
     setUser(u);
     const [fresh, dismissed] = await Promise.all([
