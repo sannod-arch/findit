@@ -667,7 +667,7 @@ function GeoStep({ onDone, photoFile }) {
 
   return (
     <div>
-      <LeafletMap pin={pin} buffer={buffer ?? 0} onPinChange={updatePin} interactive height={200} />
+      <LeafletMap key={`geo-interactive-${pin?.lat}-${pin?.lng}`} pin={pin} buffer={buffer ?? 0} onPinChange={updatePin} interactive height={200} />
       {!pin && <div style={{ fontSize: "11px", color: G.muted, textAlign: "center", marginTop: "6px" }}>{LT.geoSetPin}</div>}
       {pin && (<>
         <div style={{ display: "flex", gap: "6px", margin: "10px 0" }}>
@@ -955,7 +955,7 @@ function ItemFormModal({ onClose, onSave, defaultType, editItem, user }) {
                   {geoData.buffer ? <div style={{ fontSize: "10px", color: G.warn, marginTop: "2px" }}>◎ buferis {geoData.buffer} m</div> : null}
                 </div>
               </div>
-              {geoData.pin && <LeafletMap pin={geoData.pin} buffer={geoData.buffer ?? 0} interactive={false} height={160} />}
+              {geoData.pin && <LeafletMap key={`geo-preview-${geoData.pin.lat}-${geoData.pin.lng}-${geoData.buffer ?? 0}`} pin={geoData.pin} buffer={geoData.buffer ?? 0} interactive={false} height={160} />}
               <div style={{ display: "flex", gap: "7px", marginTop: "12px" }}>
                 <button onClick={() => setGeoData(null)} style={{ flex: 1, background: "rgba(255,255,255,0.05)", border: "none", color: G.muted, padding: "11px", borderRadius: "10px", cursor: "pointer", fontSize: "12px" }}>{LT.geoChange}</button>
                 <button onClick={() => setStep(4)} style={{ flex: 2, background: accent, border: "none", color: G.text, padding: "11px", borderRadius: "10px", fontWeight: "700", fontSize: "13px", cursor: "pointer" }}>{LT.next}</button>
@@ -1169,7 +1169,7 @@ function DetailModal({ item, onClose, user }) {
               <div style={{ fontSize: "13px", color: G.text }}>{item.location}</div>
               <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.38)", marginTop: "3px" }}>{item.city}</div>
             </div>
-            {item.geoPin && <div style={{ marginTop: "12px" }}><LeafletMap pin={item.geoPin} buffer={item.geoBuffer ?? 0} interactive={false} height={160} /></div>}
+            {item.geoPin && <div style={{ marginTop: "12px" }}><LeafletMap key={`item-${item.id}-${item.geoPin.lat}-${item.geoPin.lng}`} pin={item.geoPin} buffer={item.geoBuffer ?? 0} interactive={false} height={160} /></div>}
           </>)}
 
           {tab === "verify" && (<>
