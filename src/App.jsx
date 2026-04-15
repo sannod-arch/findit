@@ -479,38 +479,40 @@ function LeafletMap({ pin, buffer, onPinChange, interactive = true, height = 200
   const mapRef = useRef(null);
   const markerRef = useRef(null);
   const circleRef = useRef(null);
-  const [mapReady, setMapReady] = useState(false);
 
- useEffect(() => {
-  const init = () => {
-    const L = window.L;
-    const el = document.getElementById(id);
-    if (!el || mapRef.current) return;
+  useEffect(() => {
+    const init = () => {
+      const L = window.L;
+      const el = document.getElementById(id);
+      if (!el || mapRef.current) return;
 
-    const map = L.map(id, {
-      zoomControl: true,
-      attributionControl: false,
-    }).setView([54.6872, 25.2797], 13);
+      const map = L.map(id, {
+        zoomControl: true,
+        attributionControl: false,
+      }).setView([54.6872, 25.2797], 13);
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19,
-    }).addTo(map);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+      }).addTo(map);
 
-    mapRef.current = map;
+      mapRef.current = map;
 
-    setTimeout(() => map.invalidateSize(), 100);
-    setMapReady(true); 
+      setTimeout(() => {
+        map.invalidateSize();
+      }, 100);
 
-    if (interactive && onPinChange) {
-      map.on("click", (e) => {
-        onPinChange({ lat: e.latlng.lat, lng: e.latlng.lng });
-      });
+      if (interactive && onPinChange) {
+        map.on("click", (e) => {
+          onPinChange({ lat: e.latlng.lat, lng: e.latlng.lng });
+        });
+      }
+    };
+
+    if (window.L) {
+      setTimeout(init, 50);
+      return;
     }
-  };
 
-  if (window.L) {
-    setTimeout(init, 50);
-  } else {
     const link = document.createElement("link");
     link.rel = "stylesheet";
     link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
@@ -520,16 +522,14 @@ function LeafletMap({ pin, buffer, onPinChange, interactive = true, height = 200
     s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
     s.onload = () => setTimeout(init, 50);
     document.head.appendChild(s);
-  }
 
-  // ✅ cleanup visada grąžinamas, nepriklausomai nuo šakos
-  return () => {
-    if (mapRef.current) {
-      mapRef.current.remove();
-      mapRef.current = null;
-    }
-  };
-}, []);
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const L = window.L;
@@ -592,7 +592,7 @@ function LeafletMap({ pin, buffer, onPinChange, interactive = true, height = 200
     }
 
     map.setView([pin.lat, pin.lng], 15);
- }, [pin, buffer, interactive, onPinChange, mapReady]);
+  }, [pin, buffer, interactive, onPinChange]);
 
   return (
     <div
@@ -607,7 +607,6 @@ function LeafletMap({ pin, buffer, onPinChange, interactive = true, height = 200
     />
   );
 }
-
 // ─── GEOLOKACIJOS ŽINGSNIS ────────────────────────────────────────────────────
 function GeoStep({ onDone, photoFile }) {
   const [phase, setPhase] = useState("source");
