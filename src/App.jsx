@@ -475,11 +475,9 @@ function PhotoGallery({ photos, onAdd, onRemove }) {
 
 // ─── LEAFLET ŽEMĖLAPIS ────────────────────────────────────────────────────────
 function LeafletMap({ pin, buffer, onPinChange, interactive = true, height = 200 }) {
-  const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
   const circleRef = useRef(null);
-  // Refs для актуальных значений без пересоздания карты
   const pinRef = useRef(pin);
   const bufferRef = useRef(buffer);
   const interactiveRef = useRef(interactive);
@@ -489,7 +487,11 @@ function LeafletMap({ pin, buffer, onPinChange, interactive = true, height = 200
   interactiveRef.current = interactive;
   onPinChangeRef.current = onPinChange;
 
-  const drawPin = useCallback((map) => {
+  // drawPin и mountMap — стабильные функции через ref
+  const drawPinFn = useRef(null);
+  const mountMapFn = useRef(null);
+
+  drawPinFn.current = (map) => {
     const L = window.L;
     if (!map || !L) return;
     if (markerRef.current) { markerRef.current.remove(); markerRef.current = null; }
@@ -516,12 +518,12 @@ function LeafletMap({ pin, buffer, onPinChange, interactive = true, height = 200
       }).addTo(map);
     }
     map.setView([p.lat, p.lng], 15);
-  }, []);
+  };
 
-  const mountMap = useCallback((el) => {
-    if (!el) return;
+  mountMapFn.current = (el) => {
+    if (!el || mapRef.current) return;
     const L = window.L;
-    if (!L || mapRef.current) return;
+    if (!L) return;
     const map = L.map(el, { zoomControl: true, attributionControl: false })
       .setView([54.6872, 25.2797], 13);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
@@ -530,21 +532,21 @@ function LeafletMap({ pin, buffer, onPinChange, interactive = true, height = 200
       map.on("click", (e) => onPinChangeRef.current({ lat: e.latlng.lat, lng: e.latlng.lng }));
     }
     setTimeout(() => {
-      if (mapRef.current) { map.invalidateSize(); drawPin(map); }
+      if (mapRef.current) { map.invalidateSize(); drawPinFn.current(map); }
     }, 150);
-  }, [drawPin]);
+  };
 
-  // ref callback — единственная точка монтирования/размонтирования
+  // Стабильный ref callback — НЕ зависит ни от чего, не пересоздаётся
   const setRef = useCallback((el) => {
-    containerRef.current = el;
     if (!el) {
       if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
       markerRef.current = null;
       circleRef.current = null;
       return;
     }
+    const tryMount = () => mountMapFn.current(el);
     if (window.L) {
-      mountMap(el);
+      tryMount();
     } else {
       if (!document.querySelector('link[href*="leaflet"]')) {
         const link = document.createElement("link");
@@ -555,18 +557,18 @@ function LeafletMap({ pin, buffer, onPinChange, interactive = true, height = 200
       if (!document.querySelector('script[src*="leaflet"]')) {
         const s = document.createElement("script");
         s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-        s.onload = () => mountMap(el);
+        s.onload = tryMount;
         document.head.appendChild(s);
       } else {
-        const iv = setInterval(() => { if (window.L) { clearInterval(iv); mountMap(el); } }, 50);
+        const iv = setInterval(() => { if (window.L) { clearInterval(iv); tryMount(); } }, 50);
       }
     }
-  }, [mountMap]);
+  }, []); // пустой массив — callback никогда не пересоздаётся
 
   // Перерисовка пина при изменении координат/буфера
   useEffect(() => {
-    if (mapRef.current) drawPin(mapRef.current);
-  }, [pin, buffer, drawPin]);
+    if (mapRef.current) drawPinFn.current(mapRef.current);
+  }, [pin, buffer]);
 
   return (
     <div
