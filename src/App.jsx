@@ -482,7 +482,10 @@ function LeafletMap({ pin, buffer, onPinChange, interactive = true, height = 200
   const [mapReady, setMapReady] = useState(false);
 
  useEffect(() => {
+  let destroyed = false;
+
   const init = () => {
+    if (destroyed) return;
     const L = window.L;
     const el = document.getElementById(id);
     if (!el || mapRef.current) return;
@@ -497,9 +500,8 @@ function LeafletMap({ pin, buffer, onPinChange, interactive = true, height = 200
     }).addTo(map);
 
     mapRef.current = map;
-
-    setTimeout(() => map.invalidateSize(), 100);
-    setMapReady(true); 
+    setTimeout(() => { if (!destroyed) map.invalidateSize(); }, 100);
+    setMapReady(true);
 
     if (interactive && onPinChange) {
       map.on("click", (e) => {
@@ -508,29 +510,48 @@ function LeafletMap({ pin, buffer, onPinChange, interactive = true, height = 200
     }
   };
 
-  if (window.L) {
-    setTimeout(init, 50);
-  } else {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-    document.head.appendChild(link);
+  const tryInit = (attempts = 0) => {
+    if (destroyed) return;
+    const el = document.getElementById(id);
+    if (el && window.L && !mapRef.current) {
+      init();
+    } else if (attempts < 20) {
+      // повторяем каждые 50мс, до 1 секунды
+      setTimeout(() => tryInit(attempts + 1), 50);
+    }
+  };
 
-    const s = document.createElement("script");
-    s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-    s.onload = () => setTimeout(init, 50);
-    document.head.appendChild(s);
+  if (window.L) {
+    tryInit();
+  } else {
+    // Загружаем Leaflet один раз
+    if (!document.querySelector('link[href*="leaflet"]')) {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+      document.head.appendChild(link);
+    }
+    if (!document.querySelector('script[src*="leaflet"]')) {
+      const s = document.createElement("script");
+      s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+      s.onload = () => tryInit();
+      document.head.appendChild(s);
+    } else {
+      // скрипт уже добавлен, ждем загрузки
+      const check = setInterval(() => {
+        if (window.L) { clearInterval(check); tryInit(); }
+      }, 50);
+    }
   }
 
-  // ✅ cleanup visada grąžinamas, nepriklausomai nuo šakos
   return () => {
+    destroyed = true;
     if (mapRef.current) {
       mapRef.current.remove();
       mapRef.current = null;
     }
   };
 }, []);
-
   useEffect(() => {
     const L = window.L;
     const map = mapRef.current;
