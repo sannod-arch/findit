@@ -475,149 +475,102 @@ function PhotoGallery({ photos, onAdd, onRemove }) {
 
 // ─── LEAFLET ŽEMĖLAPIS ────────────────────────────────────────────────────────
 function LeafletMap({ pin, buffer, onPinChange, interactive = true, height = 200 }) {
-  const id = useRef(`map-${Math.random().toString(36).slice(2)}`).current;
+  const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
   const circleRef = useRef(null);
-  const [mapReady, setMapReady] = useState(false);
+  // Refs для актуальных значений без пересоздания карты
+  const pinRef = useRef(pin);
+  const bufferRef = useRef(buffer);
+  const interactiveRef = useRef(interactive);
+  const onPinChangeRef = useRef(onPinChange);
+  pinRef.current = pin;
+  bufferRef.current = buffer;
+  interactiveRef.current = interactive;
+  onPinChangeRef.current = onPinChange;
 
- useEffect(() => {
-  let destroyed = false;
-
-  const init = () => {
-    if (destroyed) return;
+  const drawPin = useCallback((map) => {
     const L = window.L;
-    const el = document.getElementById(id);
-    if (!el || mapRef.current) return;
-
-    const map = L.map(id, {
-      zoomControl: true,
-      attributionControl: false,
-    }).setView([54.6872, 25.2797], 13);
-
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19,
-    }).addTo(map);
-
-    mapRef.current = map;
-    setTimeout(() => { if (!destroyed) map.invalidateSize(); }, 100);
-    setMapReady(true);
-
-    if (interactive && onPinChange) {
-      map.on("click", (e) => {
-        onPinChange({ lat: e.latlng.lat, lng: e.latlng.lng });
-      });
-    }
-  };
-
-  const tryInit = (attempts = 0) => {
-    if (destroyed) return;
-    const el = document.getElementById(id);
-    if (el && window.L && !mapRef.current) {
-      init();
-    } else if (attempts < 20) {
-      // повторяем каждые 50мс, до 1 секунды
-      setTimeout(() => tryInit(attempts + 1), 50);
-    }
-  };
-
-  if (window.L) {
-    tryInit();
-  } else {
-    // Загружаем Leaflet один раз
-    if (!document.querySelector('link[href*="leaflet"]')) {
-      const link = document.createElement("link");
-      link.rel = "stylesheet";
-      link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-      document.head.appendChild(link);
-    }
-    if (!document.querySelector('script[src*="leaflet"]')) {
-      const s = document.createElement("script");
-      s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-      s.onload = () => tryInit();
-      document.head.appendChild(s);
-    } else {
-      // скрипт уже добавлен, ждем загрузки
-      const check = setInterval(() => {
-        if (window.L) { clearInterval(check); tryInit(); }
-      }, 50);
-    }
-  }
-
-  return () => {
-    destroyed = true;
-    if (mapRef.current) {
-      mapRef.current.remove();
-      mapRef.current = null;
-    }
-  };
-}, []);
-  useEffect(() => {
-    const L = window.L;
-    const map = mapRef.current;
     if (!map || !L) return;
-
-    setTimeout(() => {
-      map.invalidateSize();
-    }, 50);
-
-    if (markerRef.current) {
-      markerRef.current.remove();
-      markerRef.current = null;
-    }
-
-    if (circleRef.current) {
-      circleRef.current.remove();
-      circleRef.current = null;
-    }
-
-    if (!pin) return;
-
-    const hasBuffer = buffer != null && buffer > 0;
-
+    if (markerRef.current) { markerRef.current.remove(); markerRef.current = null; }
+    if (circleRef.current) { circleRef.current.remove(); circleRef.current = null; }
+    const p = pinRef.current;
+    const buf = bufferRef.current;
+    if (!p) return;
+    const hasBuffer = buf != null && buf > 0;
     const icon = L.divIcon({
-      html: `<div style="
-        width:18px;
-        height:18px;
-        background:${hasBuffer ? G.warn : G.found};
-        border:2.5px solid #fff;
-        border-radius:50%;
-        box-shadow:0 2px 8px rgba(0,0,0,0.5);
-      "></div>`,
-      iconSize: [18, 18],
-      iconAnchor: [9, 9],
-      className: "custom-pin",
+      html: `<div style="width:18px;height:18px;background:${hasBuffer ? G.warn : G.found};border:2.5px solid #fff;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,0.5);"></div>`,
+      iconSize: [18, 18], iconAnchor: [9, 9], className: "custom-pin",
     });
-
-    markerRef.current = L.marker([pin.lat, pin.lng], {
-      icon,
-      draggable: interactive,
-    }).addTo(map);
-
-    if (interactive && onPinChange) {
+    markerRef.current = L.marker([p.lat, p.lng], { icon, draggable: interactiveRef.current }).addTo(map);
+    if (interactiveRef.current && onPinChangeRef.current) {
       markerRef.current.on("dragend", (e) => {
-        const p = e.target.getLatLng();
-        onPinChange({ lat: p.lat, lng: p.lng });
+        const lp = e.target.getLatLng();
+        onPinChangeRef.current({ lat: lp.lat, lng: lp.lng });
       });
     }
-
     if (hasBuffer) {
-      circleRef.current = L.circle([pin.lat, pin.lng], {
-        radius: buffer,
-        color: G.warn,
-        fillColor: G.warn,
-        fillOpacity: 0.12,
-        weight: 1.5,
-        dashArray: "5,5",
+      circleRef.current = L.circle([p.lat, p.lng], {
+        radius: buf, color: G.warn, fillColor: G.warn,
+        fillOpacity: 0.12, weight: 1.5, dashArray: "5,5",
       }).addTo(map);
     }
+    map.setView([p.lat, p.lng], 15);
+  }, []);
 
-    map.setView([pin.lat, pin.lng], 15);
- }, [pin, buffer, interactive, onPinChange, mapReady]);
+  const mountMap = useCallback((el) => {
+    if (!el) return;
+    const L = window.L;
+    if (!L || mapRef.current) return;
+    const map = L.map(el, { zoomControl: true, attributionControl: false })
+      .setView([54.6872, 25.2797], 13);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
+    mapRef.current = map;
+    if (interactiveRef.current && onPinChangeRef.current) {
+      map.on("click", (e) => onPinChangeRef.current({ lat: e.latlng.lat, lng: e.latlng.lng }));
+    }
+    setTimeout(() => {
+      if (mapRef.current) { map.invalidateSize(); drawPin(map); }
+    }, 150);
+  }, [drawPin]);
+
+  // ref callback — единственная точка монтирования/размонтирования
+  const setRef = useCallback((el) => {
+    containerRef.current = el;
+    if (!el) {
+      if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
+      markerRef.current = null;
+      circleRef.current = null;
+      return;
+    }
+    if (window.L) {
+      mountMap(el);
+    } else {
+      if (!document.querySelector('link[href*="leaflet"]')) {
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+        document.head.appendChild(link);
+      }
+      if (!document.querySelector('script[src*="leaflet"]')) {
+        const s = document.createElement("script");
+        s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+        s.onload = () => mountMap(el);
+        document.head.appendChild(s);
+      } else {
+        const iv = setInterval(() => { if (window.L) { clearInterval(iv); mountMap(el); } }, 50);
+      }
+    }
+  }, [mountMap]);
+
+  // Перерисовка пина при изменении координат/буфера
+  useEffect(() => {
+    if (mapRef.current) drawPin(mapRef.current);
+  }, [pin, buffer, drawPin]);
 
   return (
     <div
-      id={id}
+      ref={setRef}
       style={{
         width: "100%",
         height: `${height}px`,
