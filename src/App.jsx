@@ -51,6 +51,8 @@ const LT = {
   statusUrgent:   "🔴 Svarbus",
   statusResolved: "✓ Rasta",
   statusExpired:  "○ Pasibaigęs",
+  statusDeleted:  "🗑 Pašalintas",
+  restoreItem:    "↺ Atstatyti",
   markUrgent:   "🔴 Pažymėti svarbiu",
   markResolved: '✓ Pažymėti „rasta"',
   markActive:   "● Grąžinti į aktyvų",
@@ -172,6 +174,7 @@ function StatusBadge({ status }) {
     urgent:   { label: LT.statusUrgent,   bg: "rgba(231,76,60,0.2)",    border: G.lost,    color: "#ff6b6b" },
     resolved: { label: LT.statusResolved, bg: "rgba(46,204,113,0.2)",   border: G.success, color: G.success },
     expired:  { label: LT.statusExpired,  bg: "rgba(255,255,255,0.06)", border: G.border,  color: G.muted  },
+    deleted:  { label: LT.statusDeleted || "🗑 Pašalintas", bg: "rgba(231,76,60,0.15)", border: "rgba(231,76,60,0.4)", color: "#ff6b6b" },
   }[status] || { label: status, bg: "rgba(255,255,255,0.06)", border: G.border, color: G.muted };
   return (
     <span style={{ background: cfg.bg, border: `1px solid ${cfg.border}`, color: cfg.color, fontSize: "10px", fontWeight: "700", padding: "2px 8px", borderRadius: "4px", whiteSpace: "nowrap" }}>
@@ -199,12 +202,18 @@ function itemFromRow(row) {
   };
 }
 
-async function dbLoadItems(isAdmin = false) {
+async function dbLoadItems(isAdmin = false, currentUserId = null) {
   if (!supabase) return [];
   let q = supabase.from("items")
     .select("*, item_photos(storage_path, order_index)")
     .order("created_at", { ascending: false });
-  if (!isAdmin) q = q.not("status_label", "in", '("deleted","expired")');
+  if (!isAdmin) {
+    if (currentUserId) {
+      q = q.or(`status_label.not.in.(deleted,expired),user_id.eq.${currentUserId}`);
+    } else {
+      q = q.not("status_label", "in", '("deleted","expired")');
+    }
+  }
   const { data, error } = await q;
   if (error) { console.error("dbLoadItems:", error); return []; }
   return (data || []).map(itemFromRow);
@@ -1296,8 +1305,16 @@ function CabinetScreen({ user, isAdmin, items, onEdit, onStatusChange, onDelete,
                   </div>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                  <button onClick={() => onEdit(item)} style={{ background: "rgba(255,255,255,0.08)", border: "none", color: G.text, padding: "5px 10px", borderRadius: "7px", fontSize: "11px", cursor: "pointer" }}>✎</button>
-                  <button onClick={() => { if (window.confirm(LT.deleteConfirm)) onDelete(item.id); }} style={{ background: "rgba(231,76,60,0.12)", border: "none", color: G.lost, padding: "5px 10px", borderRadius: "7px", fontSize: "11px", cursor: "pointer" }}>🗑</button>
+                  {item.status === "deleted" ? (
+                    <button onClick={() => onStatusChange(item.id, "active")} style={{ background: "rgba(46,204,113,0.15)", border: "none", color: G.success, padding: "5px 10px", borderRadius: "7px", fontSize: "11px", cursor: "pointer", fontWeight: "700" }}>
+                      {LT.restoreItem || "↺ Atstatyti"}
+                    </button>
+                  ) : (
+                    <>
+                      <button onClick={() => onEdit(item)} style={{ background: "rgba(255,255,255,0.08)", border: "none", color: G.text, padding: "5px 10px", borderRadius: "7px", fontSize: "11px", cursor: "pointer" }}>✎</button>
+                      <button onClick={() => { if (window.confirm(LT.deleteConfirm)) onDelete(item.id); }} style={{ background: "rgba(231,76,60,0.12)", border: "none", color: G.lost, padding: "5px 10px", borderRadius: "7px", fontSize: "11px", cursor: "pointer" }}>🗑</button>
+                    </>
+                  )}
                 </div>
               </div>
             ))}
@@ -1485,7 +1502,7 @@ export default function App() {
     setItems([]);        // išvalyti prieš kraunant naujus
     setUser(u);
     const [fresh, dismissed] = await Promise.all([
-      dbLoadItems(false),
+      dbLoadItems(false, u.id),
       dbLoadDismissed(u.id),
     ]);
     setItems(fresh);
@@ -1501,8 +1518,8 @@ return () => subscription.unsubscribe();
   // Krauti skelbimai
   useEffect(() => {
     setLoadingItems(true);
-    dbLoadItems(isAdmin).then(data => { setItems(data); setLoadingItems(false); }).catch(() => setLoadingItems(false));
-  }, [isAdmin]);
+    dbLoadItems(isAdmin, user?.id).then(data => { setItems(data); setLoadingItems(false); }).catch(() => setLoadingItems(false));
+  }, [isAdmin, user?.id]);
 
   // Pridėti skelbimą
   const handleAdd = item => {
@@ -1532,8 +1549,12 @@ return () => subscription.unsubscribe();
 
   // Šalinti skelbimą
   const handleDelete = async id => {
-    await dbUpdateStatus(id, "deleted");
-    setItems(prev => prev.filter(i => i.id !== id));
+    try {
+      await dbUpdateStatus(id, "deleted");
+      setItems(prev => prev.map(i => i.id === id ? { ...i, status: "deleted" } : i));
+    } catch (e) {
+      alert("Klaida šalinant skelbimą: " + e.message);
+    }
   };
 
   // Atmesti sutapimą — išsaugoti DB
