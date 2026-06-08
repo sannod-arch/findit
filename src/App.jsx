@@ -204,19 +204,36 @@ function itemFromRow(row) {
 
 async function dbLoadItems(isAdmin = false, currentUserId = null) {
   if (!supabase) return [];
+
+  // Pagrindinė užklausa: visi aktyvūs/nešalinti skelbimai
   let q = supabase.from("items")
     .select("*, item_photos(storage_path, order_index)")
     .order("created_at", { ascending: false });
   if (!isAdmin) {
-    if (currentUserId) {
-      q = q.or(`status_label.not.in.(deleted,expired),user_id.eq.${currentUserId}`);
-    } else {
-      q = q.not("status_label", "in", '("deleted","expired")');
-    }
+    q = q.not("status_label", "in", '("deleted","expired")');
   }
   const { data, error } = await q;
   if (error) { console.error("dbLoadItems:", error); return []; }
-  return (data || []).map(itemFromRow);
+  const publicItems = data || [];
+
+  // Papildoma užklausa: savininko pašalinti skelbimai (matomos tik kabinete)
+  if (currentUserId && !isAdmin) {
+    const { data: ownDeleted, error: delError } = await supabase
+      .from("items")
+      .select("*, item_photos(storage_path, order_index)")
+      .eq("user_id", currentUserId)
+      .in("status_label", ["deleted", "expired"])
+      .order("created_at", { ascending: false });
+    if (!delError && ownDeleted?.length) {
+      // Sujungiame, pašaliname dublikatus (jei skelbimai jau matosi per pagrindinę)
+      const ids = new Set(publicItems.map(r => r.id));
+      const merged = [...publicItems, ...ownDeleted.filter(r => !ids.has(r.id))];
+      merged.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      return merged.map(itemFromRow);
+    }
+  }
+
+  return publicItems.map(itemFromRow);
 }
 
 async function dbSaveItem(payload, photoDataUrls) {
